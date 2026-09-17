@@ -104,7 +104,6 @@ jobs:
           out-file-path: build/Release
 
       # build/Release/ep_taskbar.*.amd64.dll -> build/Release/x64/ep_taskbar.*.dll
-      # build/Release/ep_taskbar.*.arm64.dll -> build/Release/ARM64/ep_taskbar.*.dll
       - name: Move ep_taskbar
         shell: bash
         run: |
@@ -115,12 +114,7 @@ jobs:
             done
           fi
 
-          if ls build/Release/ep_taskbar.*.arm64.dll 1> /dev/null 2>&1; then
-            mkdir -p build/Release/ARM64
-            for file in build/Release/ep_taskbar.*.arm64.dll; do
-              mv "$file" "build/Release/ARM64/$(basename "$file" .arm64.dll).dll"
-            done
-          fi
+          rm -f build/Release/ep_taskbar.*.arm64.dll
 
       - name: Build ExplorerPatcher
         working-directory: ${{env.GITHUB_WORKSPACE}}
@@ -131,7 +125,6 @@ jobs:
         shell: bash
         run: |
           if [[ -f "build/Release/x64/ExplorerPatcher.amd64.dll" ]]; then cp build/Release/x64/ExplorerPatcher.amd64.dll build/Release/x64/dxgi.dll; fi
-          if [[ -f "build/Release/ARM64/ExplorerPatcher.arm64.dll" ]]; then cp build/Release/ARM64/ExplorerPatcher.arm64.dll build/Release/ARM64/dxgi.dll; fi
 
       - name: Patch amd64 setup
         shell: cmd
@@ -141,21 +134,11 @@ jobs:
           )
           exit /b 0
 
-      - name: Patch arm64 setup
-        shell: cmd
-        run: |
-          if exist "build\Release\ARM64\ExplorerPatcher.arm64.dll" (
-            "build\Release\x64\ep_setup_patch.exe" "build\Release\ARM64\ExplorerPatcher.arm64.dll" "build\Release\ARM64\ep_setup.exe"
-          )
-          exit /b 0
-
       - name: Delete intermediate files
         shell: bash
         run: |
           rm -rf build/Release/x64/ep_setup_files
           rm -f build/Release/x64/ep_setup_files.zip.bin
-          rm -rf build/Release/ARM64/ep_setup_files
-          rm -f build/Release/ARM64/ep_setup_files.zip.bin
 
       - name: Upload artifacts
         if: github.event_name != 'pull_request'
@@ -269,16 +252,12 @@ jobs:
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/smoke-screenshots
 
       # build/Release/x64/ep_setup.exe -> build/Release/ep_setup.exe
-      # build/Release/ARM64/ep_setup.exe -> build/Release/ep_setup_arm64.exe
       - name: Stage files for release
         if: github.event_name == 'push' && github.ref_type == 'tag'
         shell: bash
         run: |
           if [ -d "build/Release/x64" ] && ls build/Release/x64/ep_setup.exe 1> /dev/null 2>&1; then
             cp build/Release/x64/ep_setup.exe build/Release/ep_setup.exe
-          fi
-          if [ -d "build/Release/ARM64" ] && ls build/Release/ARM64/ep_setup.exe 1> /dev/null 2>&1; then
-            cp build/Release/ARM64/ep_setup.exe build/Release/ep_setup_arm64.exe
           fi
 
       - name: Generate release name
@@ -313,7 +292,6 @@ jobs:
           body: ${{ steps.release_description.outputs.data }}
           files: |
             build/Release/ep_setup.exe
-            build/Release/ep_setup_arm64.exe
           token: ${{ secrets.PAT }}
 
       - name: Create/update release (forks)
@@ -328,5 +306,4 @@ jobs:
           body: ${{ steps.release_description.outputs.data }}
           files: |
             build/Release/ep_setup.exe
-            build/Release/ep_setup_arm64.exe
           token: ${{ secrets.GITHUB_TOKEN }}
