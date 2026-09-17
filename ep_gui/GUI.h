@@ -89,6 +89,10 @@ typedef struct _GUI
 	BOOL bRebuildIfTabOrderIsEmpty;
 	int dwPageLocation;
 	DWORD last_section;
+	// ExplorerPatcher++: vertical scrolling of the page content (pixels)
+	int scrollY;
+	int maxScroll;
+	BOOL bEnsureFocusVisible;
 } GUI;
 
 static BOOL GUI_Build(HDC hDC, HWND hWnd);

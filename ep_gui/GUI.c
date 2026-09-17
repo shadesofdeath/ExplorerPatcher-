@@ -50,6 +50,48 @@ static DWORD GUI_ColorRefToArgb(COLORREF cr)
     return 0xFF000000 | ((DWORD)GetRValue(cr) << 16) | ((DWORD)GetGValue(cr) << 8) | (DWORD)GetBValue(cr);
 }
 
+// Fills a rectangle with a (non premultiplied) ARGB color through AlphaBlend, so that it also works on the
+// transparent (Mica) background of the window.
+static void GUI_FillRectAlpha(HDC hdc, const RECT* prc, DWORD argb)
+{
+    int w = prc->right - prc->left, h = prc->bottom - prc->top;
+    if (w <= 0 || h <= 0 || w > 4096 || h > 16384)
+    {
+        return;
+    }
+    BITMAPINFO bi;
+    ZeroMemory(&bi, sizeof(bi));
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = 1;
+    bi.bmiHeader.biHeight = 1;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    DWORD* pBits = NULL;
+    HBITMAP hBitmap = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, (void**)&pBits, NULL, 0);
+    if (!hBitmap || !pBits)
+    {
+        if (hBitmap) DeleteObject(hBitmap);
+        return;
+    }
+    DWORD a = argb >> 24;
+    *pBits = (a << 24) | ((((argb >> 16) & 0xFF) * a / 255) << 16) | ((((argb >> 8) & 0xFF) * a / 255) << 8) | ((argb & 0xFF) * a / 255);
+    HDC hdcMem = CreateCompatibleDC(hdc);
+    if (hdcMem)
+    {
+        HGDIOBJ hOld = SelectObject(hdcMem, hBitmap);
+        BLENDFUNCTION bf;
+        bf.BlendOp = AC_SRC_OVER;
+        bf.BlendFlags = 0;
+        bf.SourceConstantAlpha = 255;
+        bf.AlphaFormat = AC_SRC_ALPHA;
+        AlphaBlend(hdc, prc->left, prc->top, w, h, hdcMem, 0, 0, 1, 1, bf);
+        SelectObject(hdcMem, hOld);
+        DeleteDC(hdcMem);
+    }
+    DeleteObject(hBitmap);
+}
+
 // Draws a minimal "line and dot" switch at the left edge of the line rectangle, vertically centered: a thin rail
 // with a hollow ring at its left end when off, and a filled accent colored dot at its right end when on.
 // Returns the horizontal space (in pixels) taken by the switch plus a gap, or 0 when nothing was drawn.
@@ -1003,6 +1045,10 @@ LSTATUS GUI_RegQueryValueExW(
 
 static void GUI_SetSection(GUI* _this, BOOL bCheckEnablement, int dwSection)
 {
+    if (_this->section != (SIZE_T)dwSection)
+    {
+        _this->scrollY = 0;
+    }
     _this->section = dwSection;
 
     HKEY hKey = NULL;
@@ -1295,6 +1341,12 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
 
         BOOL bResetLastHeading = TRUE;
         BOOL bWasSpecifiedSectionValid = FALSE;
+        // ExplorerPatcher++: scrolling. The content of the selected page is drawn shifted by scrollY and clipped to
+        // the viewport between the caption and the footer.
+        BOOL bContentClip = FALSE;
+        LONG lContentBottom = 0, lViewTop = 0, lViewBottom = 0;
+        RECT rcScrollLine;
+        SetRectEmpty(&rcScrollLine);
         FILE* f = fmemopen(pRscr, cbRscr, "r");
         char* line = malloc(MAX_LINE_LENGTH * sizeof(char));
         wchar_t* text = malloc((MAX_LINE_LENGTH + 3) * sizeof(wchar_t)); 
@@ -1376,6 +1428,15 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
 #endif
                 if (!strncmp(line, ";f", 2))
                 {
+                    if (currentSection == _this->section)
+                    {
+                        lContentBottom = dwMaxHeight;
+                    }
+                    if (bContentClip)
+                    {
+                        RestoreDC(hdcPaint, -1);
+                        bContentClip = FALSE;
+                    }
                     //if (topAdj + ((currentSection + 2) * GUI_SECTION_HEIGHT * dy) > dwMaxHeight)
                     //{
                     //    dwMaxHeight = topAdj + ((currentSection + 2) * GUI_SECTION_HEIGHT * dy);
@@ -1421,6 +1482,40 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
                 rcText.top = !strncmp(line, ";M ", 3) ? 0 : (dwTop + dwMaxHeight);
                 rcText.right = (rc.right - rc.left) - _this->padding.right;
                 rcText.bottom = !strncmp(line, ";M ", 3) ? _this->GUI_CAPTION_LINE_HEIGHT * dy : (dwMaxHeight + dwLineHeight * dy - dwBottom);
+
+                if (strncmp(line, ";T ", 3) && strncmp(line, ";M ", 3) && currentSection != -1 && currentSection == _this->section &&
+                    !_this->bCalcExtent && !AuditFile && _this->dwStatusbarY)
+                {
+                    if (lViewBottom == 0)
+                    {
+                        // First content line of the page: the viewport starts where the content starts.
+                        lViewTop = (LONG)dwMaxHeight;
+                        lViewBottom = (LONG)(_this->dwStatusbarY * dy);
+                    }
+                    OffsetRect(&rcText, 0, -_this->scrollY);
+                    if (hDC)
+                    {
+                        if (!bContentClip)
+                        {
+                            SaveDC(hdcPaint);
+                            IntersectClipRect(hdcPaint, rc.left, lViewTop, rc.right, lViewBottom);
+                            bContentClip = TRUE;
+                        }
+                    }
+                    // Themed (composited) text ignores the clip region, so lines that are not inside the viewport are
+                    // moved out of sight altogether; that keeps them from being drawn or clicked.
+                    rcScrollLine = rcText;
+                    LONG lTolerance = (LONG)(8 * dy);
+                    if (rcText.top < lViewTop - lTolerance || rcText.bottom > lViewBottom + lTolerance)
+                    {
+                        OffsetRect(&rcText, 0, -1000000);
+                    }
+                }
+                else if (bContentClip)
+                {
+                    RestoreDC(hdcPaint, -1);
+                    bContentClip = FALSE;
+                }
 
                 if (!strncmp(line, ";T ", 3))
                 {
@@ -1497,6 +1592,10 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
                             GUI_SetSection(_this, TRUE, currentSection + 1);
                             InvalidateRect(hwnd, NULL, FALSE);
                         }
+                    }
+                    if (currentSection != -1 && currentSection == _this->section)
+                    {
+                        lContentBottom = dwMaxHeight;
                     }
                     currentSection++;
                     continue;
@@ -1756,6 +1855,18 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
                         if (!strncmp(line, ";u ", 3) && tabOrder == _this->tabOrder)
                         {
                             bTabOrderHit = TRUE;
+                            if (_this->bEnsureFocusVisible && lViewBottom > lViewTop)
+                            {
+                                _this->bEnsureFocusVisible = FALSE;
+                                int nDelta = 0;
+                                if (rcScrollLine.top < lViewTop) nDelta = rcScrollLine.top - lViewTop;
+                                else if (rcScrollLine.bottom > lViewBottom) nDelta = rcScrollLine.bottom - lViewBottom;
+                                if (nDelta)
+                                {
+                                    _this->scrollY = max(0, _this->scrollY + nDelta);
+                                    InvalidateRect(hwnd, NULL, FALSE);
+                                }
+                            }
                             if (!IsThemeActive() || IsHighContrast())
                             {
                                 cr = SetTextColor(hdcPaint, GetSysColor(COLOR_HIGHLIGHT));
@@ -3236,6 +3347,18 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
                         if (tabOrder == _this->tabOrder)
                         {
                             bTabOrderHit = TRUE;
+                            if (_this->bEnsureFocusVisible && lViewBottom > lViewTop)
+                            {
+                                _this->bEnsureFocusVisible = FALSE;
+                                int nDelta = 0;
+                                if (rcScrollLine.top < lViewTop) nDelta = rcScrollLine.top - lViewTop;
+                                else if (rcScrollLine.bottom > lViewBottom) nDelta = rcScrollLine.bottom - lViewBottom;
+                                if (nDelta)
+                                {
+                                    _this->scrollY = max(0, _this->scrollY + nDelta);
+                                    InvalidateRect(hwnd, NULL, FALSE);
+                                }
+                            }
                             if (!IsThemeActive() || IsHighContrast())
                             {
                                 cr = SetTextColor(hdcPaint, GetSysColor(COLOR_HIGHLIGHT));
@@ -3424,6 +3547,37 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
             }
         }
         fclose(f);
+        if (bContentClip)
+        {
+            RestoreDC(hdcPaint, -1);
+            bContentClip = FALSE;
+        }
+        if (!_this->bCalcExtent && !AuditFile && lViewBottom > lViewTop)
+        {
+            int nMaxScroll = (int)(lContentBottom + (LONG)(GUI_PADDING * dy) - lViewBottom);
+            _this->maxScroll = nMaxScroll > 0 ? nMaxScroll : 0;
+            if (_this->scrollY > _this->maxScroll)
+            {
+                _this->scrollY = _this->maxScroll;
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+            if (hDC && _this->maxScroll > 0)
+            {
+                // Minimal scroll indicator at the right edge of the viewport.
+                LONG lViewHeight = lViewBottom - lViewTop;
+                LONG lThumbHeight = max((LONG)(24 * dy), lViewHeight * lViewHeight / (lViewHeight + _this->maxScroll));
+                RECT rcThumb;
+                rcThumb.right = rc.right - (LONG)(4 * dx);
+                rcThumb.left = rcThumb.right - max(2, (LONG)(3 * dx));
+                rcThumb.top = lViewTop + (LONG)((LONGLONG)(lViewHeight - lThumbHeight) * _this->scrollY / _this->maxScroll);
+                rcThumb.bottom = rcThumb.top + lThumbHeight;
+                GUI_FillRectAlpha(hdcPaint, &rcThumb, g_darkModeEnabled ? 0x70FFFFFF : 0x70000000);
+            }
+        }
+        else if (!_this->bCalcExtent && !AuditFile)
+        {
+            _this->maxScroll = 0;
+        }
         free(section);
         free(name);
         free(text);
@@ -3789,11 +3943,41 @@ LRESULT CALLBACK GUI_WndProc(GUI* pThis, HWND hWnd, UINT uMsg, WPARAM wParam, LP
             }
             break;
         }
+        case WM_MOUSEWHEEL:
+        {
+            // ExplorerPatcher++: scroll the page content
+            if (pThis->maxScroll > 0)
+            {
+                int nStep = (int)(GUI_LINE_HEIGHT * (pThis->dpi.y / 96.0) * 2.0);
+                int nScrollY = pThis->scrollY - (GET_WHEEL_DELTA_WPARAM(wParam) * nStep) / WHEEL_DELTA;
+                nScrollY = max(0, min(pThis->maxScroll, nScrollY));
+                if (nScrollY != pThis->scrollY)
+                {
+                    pThis->scrollY = nScrollY;
+                    InvalidateRect(hWnd, NULL, FALSE);
+                }
+            }
+            return 0;
+        }
         case WM_KEYDOWN:
         {
             pThis->bRebuildIfTabOrderIsEmpty = FALSE;
             switch (wParam)
             {
+                case VK_PRIOR:
+                case VK_NEXT:
+                case VK_HOME:
+                case VK_END:
+                {
+                    if (pThis->maxScroll > 0)
+                    {
+                        int nPage = (int)(GUI_LINE_HEIGHT * (pThis->dpi.y / 96.0) * 8.0);
+                        int nScrollY = wParam == VK_HOME ? 0 : (wParam == VK_END ? pThis->maxScroll : pThis->scrollY + (wParam == VK_NEXT ? nPage : -nPage));
+                        pThis->scrollY = max(0, min(pThis->maxScroll, nScrollY));
+                        InvalidateRect(hWnd, NULL, FALSE);
+                    }
+                    return 0;
+                }
                 case VK_ESCAPE:
                 {
                     PostMessageW(hWnd, WM_CLOSE, 0, 0);
@@ -3824,6 +4008,7 @@ LRESULT CALLBACK GUI_WndProc(GUI* pThis, HWND hWnd, UINT uMsg, WPARAM wParam, LP
                     }
                     pThis->bRebuildIfTabOrderIsEmpty = TRUE;
                     pThis->bShouldAnnounceSelected = TRUE;
+                    pThis->bEnsureFocusVisible = TRUE;
                     InvalidateRect(hWnd, NULL, FALSE);
                     return 0;
                 }
@@ -4291,6 +4476,9 @@ __declspec(dllexport) int ZZGUI(HWND hWnd, HINSTANCE hInstance, LPSTR lpszCmdLin
     _this.bCalcExtent = 1;
     _this.section = 0;
     _this.dwStatusbarY = 0;
+    _this.scrollY = 0;
+    _this.maxScroll = 0;
+    _this.bEnsureFocusVisible = FALSE;
     _this.hIcon = NULL;
     _this.hExplorerFrame = NULL;
 
