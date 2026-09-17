@@ -249,6 +249,25 @@ jobs:
           path: smoke/
           if-no-files-found: warn
 
+      # The screenshots are also pushed to the "smoke-screenshots" branch so they can be fetched with git
+      # (artifact downloads are served from Azure blob storage, which is not reachable everywhere).
+      - name: Publish smoke test screenshots to the smoke-screenshots branch
+        if: always() && github.event_name != 'pull_request'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! ls smoke/*.png >/dev/null 2>&1; then echo "No screenshots to publish"; exit 0; fi
+          rm -rf /tmp/shots && mkdir -p /tmp/shots && cp smoke/* /tmp/shots/
+          cd /tmp/shots
+          git init -q -b smoke-screenshots
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Smoke test screenshots for ${GITHUB_SHA::7} (run ${GITHUB_RUN_ID})"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/smoke-screenshots
+
       # build/Release/x64/ep_setup.exe -> build/Release/ep_setup.exe
       # build/Release/ARM64/ep_setup.exe -> build/Release/ep_setup_arm64.exe
       - name: Stage files for release
