@@ -3,6 +3,177 @@ DEFINE_GUID(LiveSetting_Property_GUID, 0xc12bcd8e, 0x2a8e, 0x4950, 0x8a, 0xe7, 0
 #include <oleacc.h>
 #include "GUI.h"
 
+#pragma region "ExplorerPatcher++ toggle switch"
+// Minimal GDI+ flat API declarations (gdiplus.h is C++ only). Used to draw anti-aliased toggle switches
+// into a 32bpp premultiplied DIB that is then alpha blended onto the (possibly transparent) paint buffer.
+typedef struct EP_GpGraphics EP_GpGraphics;
+typedef struct EP_GpBitmap EP_GpBitmap;
+typedef struct EP_GpBrush EP_GpBrush;
+typedef struct EP_GpPen EP_GpPen;
+typedef struct EP_GpPath EP_GpPath;
+typedef struct _EP_GdiplusStartupInput
+{
+    UINT32 GdiplusVersion;
+    void* DebugEventCallback;
+    BOOL SuppressBackgroundThread;
+    BOOL SuppressExternalCodecs;
+} EP_GdiplusStartupInput;
+#define EP_PixelFormat32bppPARGB 0x000E200B
+#define EP_SmoothingModeAntiAlias 4
+#define EP_UnitPixel 2
+int WINAPI GdiplusStartup(ULONG_PTR* token, const EP_GdiplusStartupInput* input, void* output);
+int WINAPI GdipCreateBitmapFromScan0(INT width, INT height, INT stride, INT format, BYTE* scan0, EP_GpBitmap** bitmap);
+int WINAPI GdipGetImageGraphicsContext(EP_GpBitmap* image, EP_GpGraphics** graphics);
+int WINAPI GdipSetSmoothingMode(EP_GpGraphics* graphics, int smoothingMode);
+int WINAPI GdipCreateSolidFill(DWORD color, EP_GpBrush** brush);
+int WINAPI GdipCreatePen1(DWORD color, float width, int unit, EP_GpPen** pen);
+int WINAPI GdipCreatePath(int brushMode, EP_GpPath** path);
+int WINAPI GdipAddPathArc(EP_GpPath* path, float x, float y, float width, float height, float startAngle, float sweepAngle);
+int WINAPI GdipClosePathFigure(EP_GpPath* path);
+int WINAPI GdipFillPath(EP_GpGraphics* graphics, EP_GpBrush* brush, EP_GpPath* path);
+int WINAPI GdipDrawPath(EP_GpGraphics* graphics, EP_GpPen* pen, EP_GpPath* path);
+int WINAPI GdipFillEllipse(EP_GpGraphics* graphics, EP_GpBrush* brush, float x, float y, float width, float height);
+int WINAPI GdipDeletePath(EP_GpPath* path);
+int WINAPI GdipDeleteBrush(EP_GpBrush* brush);
+int WINAPI GdipDeletePen(EP_GpPen* pen);
+int WINAPI GdipDeleteGraphics(EP_GpGraphics* graphics);
+int WINAPI GdipDisposeImage(EP_GpBitmap* image);
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "Msimg32.lib")
+
+static DWORD GUI_ColorRefToArgb(COLORREF cr)
+{
+    return 0xFF000000 | ((DWORD)GetRValue(cr) << 16) | ((DWORD)GetGValue(cr) << 8) | (DWORD)GetBValue(cr);
+}
+
+// Draws a Windows 11 style toggle switch at the left edge of the line rectangle, vertically centered.
+// Returns the horizontal space (in pixels) taken by the switch plus a gap, or 0 when nothing was drawn.
+static int GUI_DrawToggleSwitch(HDC hdc, const RECT* prcLine, BOOL bOn, BOOL bFocused, BOOL bDark, double dx, double dy)
+{
+    static ULONG_PTR gdiplusToken = 0;
+    if (!gdiplusToken)
+    {
+        EP_GdiplusStartupInput input;
+        ZeroMemory(&input, sizeof(input));
+        input.GdiplusVersion = 1;
+        if (GdiplusStartup(&gdiplusToken, &input, NULL) != 0)
+        {
+            gdiplusToken = 0;
+            return 0;
+        }
+    }
+
+    int w = (int)(34 * dx + 0.5), h = (int)(16 * dy + 0.5);
+    if (w < 20) w = 20;
+    if (h < 10) h = 10;
+    int cxLine = prcLine->right - prcLine->left, cyLine = prcLine->bottom - prcLine->top;
+    if (cxLine < w || cyLine < h)
+    {
+        return 0;
+    }
+    int x = prcLine->left, y = prcLine->top + (cyLine - h) / 2;
+
+    BITMAPINFO bi;
+    ZeroMemory(&bi, sizeof(bi));
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* pBits = NULL;
+    HBITMAP hBitmap = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, &pBits, NULL, 0);
+    if (!hBitmap || !pBits)
+    {
+        if (hBitmap) DeleteObject(hBitmap);
+        return 0;
+    }
+    ZeroMemory(pBits, (size_t)w * h * 4);
+
+    BOOL bDrawn = FALSE;
+    EP_GpBitmap* pBitmap = NULL;
+    EP_GpGraphics* pGraphics = NULL;
+    if (GdipCreateBitmapFromScan0(w, h, w * 4, EP_PixelFormat32bppPARGB, (BYTE*)pBits, &pBitmap) == 0 && pBitmap &&
+        GdipGetImageGraphicsContext(pBitmap, &pGraphics) == 0 && pGraphics)
+    {
+        GdipSetSmoothingMode(pGraphics, EP_SmoothingModeAntiAlias);
+
+        COLORREF crAccent = RGB(0, 120, 212);
+        DWORD dwColorization = 0;
+        BOOL bOpaque = FALSE;
+        if (SUCCEEDED(DwmGetColorizationColor(&dwColorization, &bOpaque)))
+        {
+            crAccent = RGB((dwColorization >> 16) & 0xFF, (dwColorization >> 8) & 0xFF, dwColorization & 0xFF);
+        }
+        DWORD argbTrackFill = bOn ? GUI_ColorRefToArgb(crAccent) : 0;
+        DWORD argbTrackBorder = bOn ? argbTrackFill : (bDark ? 0xFFA0A0A0 : 0xFF8A8A8A);
+        DWORD argbKnob = bOn ? 0xFFFFFFFF : (bDark ? 0xFFCCCCCC : 0xFF5A5A5A);
+        if (bFocused)
+        {
+            argbTrackBorder = GUI_ColorRefToArgb(bDark ? GUI_TEXTCOLOR_SELECTED_DARK : GUI_TEXTCOLOR_SELECTED);
+        }
+
+        float pad = 1.0f;
+        float d = (float)h - 2 * pad;
+        EP_GpPath* pPath = NULL;
+        if (GdipCreatePath(0, &pPath) == 0 && pPath)
+        {
+            GdipAddPathArc(pPath, pad, pad, d, d, 90.0f, 180.0f);
+            GdipAddPathArc(pPath, (float)w - pad - d, pad, d, d, 270.0f, 180.0f);
+            GdipClosePathFigure(pPath);
+            if (argbTrackFill & 0xFF000000)
+            {
+                EP_GpBrush* pBrush = NULL;
+                if (GdipCreateSolidFill(argbTrackFill, &pBrush) == 0 && pBrush)
+                {
+                    GdipFillPath(pGraphics, pBrush, pPath);
+                    GdipDeleteBrush(pBrush);
+                }
+            }
+            EP_GpPen* pPen = NULL;
+            if (GdipCreatePen1(argbTrackBorder, 1.0f, EP_UnitPixel, &pPen) == 0 && pPen)
+            {
+                GdipDrawPath(pGraphics, pPen, pPath);
+                GdipDeletePen(pPen);
+            }
+            GdipDeletePath(pPath);
+        }
+
+        float kd = (float)h * 0.55f;
+        float m = ((float)h - kd) / 2.0f;
+        float kx = bOn ? ((float)w - m - kd) : m;
+        EP_GpBrush* pKnobBrush = NULL;
+        if (GdipCreateSolidFill(argbKnob, &pKnobBrush) == 0 && pKnobBrush)
+        {
+            GdipFillEllipse(pGraphics, pKnobBrush, kx, m, kd, kd);
+            GdipDeleteBrush(pKnobBrush);
+        }
+        bDrawn = TRUE;
+    }
+    if (pGraphics) GdipDeleteGraphics(pGraphics);
+    if (pBitmap) GdipDisposeImage(pBitmap);
+
+    if (bDrawn)
+    {
+        HDC hdcMem = CreateCompatibleDC(hdc);
+        if (hdcMem)
+        {
+            HGDIOBJ hOld = SelectObject(hdcMem, hBitmap);
+            BLENDFUNCTION bf;
+            bf.BlendOp = AC_SRC_OVER;
+            bf.BlendFlags = 0;
+            bf.SourceConstantAlpha = 255;
+            bf.AlphaFormat = AC_SRC_ALPHA;
+            AlphaBlend(hdc, x, y, w, h, hdcMem, 0, 0, w, h, bf);
+            SelectObject(hdcMem, hOld);
+            DeleteDC(hdcMem);
+        }
+    }
+    DeleteObject(hBitmap);
+    return bDrawn ? (w + (int)(8 * dx + 0.5)) : 0;
+}
+#pragma endregion
+
 TCHAR GUI_title[260];
 FILE* AuditFile = NULL;
 WCHAR wszLanguage[LOCALE_NAME_MAX_LENGTH];
@@ -3173,6 +3344,18 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
                                 _this->bShouldAnnounceSelected = FALSE;
                             }
                         }
+                        // ExplorerPatcher++: boolean options are drawn as toggle switches instead of check / cross glyphs
+                        const WCHAR* pszDrawText = text;
+                        RECT rcDrawText = rcText;
+                        if ((text[0] == L'\u2714' || text[0] == L'\u274C') && IsThemeActive() && !IsHighContrast())
+                        {
+                            int cxSwitch = GUI_DrawToggleSwitch(hdcPaint, &rcText, text[0] == L'\u2714', tabOrder == _this->tabOrder, g_darkModeEnabled, dx, dy);
+                            if (cxSwitch > 0)
+                            {
+                                pszDrawText = text + 3;
+                                rcDrawText.left += cxSwitch;
+                            }
+                        }
                         if (IsThemeActive() && !IsHighContrast())
                         {
                             DrawThemeTextEx(
@@ -3180,10 +3363,10 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
                                 hdcPaint,
                                 0,
                                 0,
-                                text,
+                                pszDrawText,
                                 -1,
                                 dwTextFlags,
-                                &rcText,
+                                &rcDrawText,
                                 &DttOpts
                             );
                         }
@@ -3191,9 +3374,9 @@ static BOOL GUI_Build(HDC hDC, HWND hwnd, POINT pt)
                         {
                             DrawTextW(
                                 hdcPaint,
-                                text,
+                                pszDrawText,
                                 -1,
-                                &rcText,
+                                &rcDrawText,
                                 dwTextFlags
                             );
                         }
