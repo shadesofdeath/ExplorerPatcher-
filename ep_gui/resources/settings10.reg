@@ -759,7 +759,10 @@
 ;e
 ;e %R:2003%
 ;e %AUTHORSSTRING%
+;e %R:2451%
 ;t %OSVERSIONSTRING%
+;y %R:2452% (https://github.com/shadesofdeath/ExplorerPatcherPlusPlus) 🡕
+;https://github.com/shadesofdeath/ExplorerPatcherPlusPlus
 ;y %R:2006% (https://github.com/valinet) 🡕
 ;https://github.com/valinet
 ;q

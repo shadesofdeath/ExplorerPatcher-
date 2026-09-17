@@ -477,6 +477,8 @@ BEGIN
     IDS_ESSENTIAL_AUTOTHEME       "Switch between light and dark mode automatically"
     IDS_ESSENTIAL_AUTOTHEME_LIGHT "Light mode starts at"
     IDS_ESSENTIAL_AUTOTHEME_DARK  "Dark mode starts at"
+    IDS_ESSENTIAL_ABOUT_AUTHOR    "ExplorerPatcher++ and its Essential Tweaks are made by shadesofdeath."
+    IDS_ESSENTIAL_ABOUT_GITHUB    "Visit ExplorerPatcher++ on GitHub"
 
     IDS_UNINSTALL               "Uninstall"
     IDS_UNINSTALL_UNINSTALL     "Uninstall ExplorerPatcher"

@@ -57,4 +57,6 @@ BEGIN
     IDS_ESSENTIAL_AUTOTHEME       "Açık ve koyu mod arasında otomatik geçiş yap"
     IDS_ESSENTIAL_AUTOTHEME_LIGHT "Açık modun başlama saati"
     IDS_ESSENTIAL_AUTOTHEME_DARK  "Koyu modun başlama saati"
+    IDS_ESSENTIAL_ABOUT_AUTHOR    "ExplorerPatcher++ ve Temel İnce Ayarlar shadesofdeath tarafından geliştirilmektedir."
+    IDS_ESSENTIAL_ABOUT_GITHUB    "ExplorerPatcher++ GitHub sayfasını ziyaret et"
 END
