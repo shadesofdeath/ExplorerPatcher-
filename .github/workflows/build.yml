@@ -166,6 +166,89 @@ jobs:
             build/Release/
           if-no-files-found: error
 
+      # ExplorerPatcher++ smoke test: install the freshly built setup on the runner, start Explorer,
+      # open the Properties window on the "Essential Tweaks" page and take screenshots.
+      - name: Smoke test (install, open Properties, screenshots)
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          New-Item -ItemType Directory -Force -Path smoke | Out-Null
+          Add-Type -AssemblyName System.Windows.Forms
+          Add-Type -AssemblyName System.Drawing
+          function Take-Screenshot($name) {
+            $b = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            $bmp.Save((Join-Path (Resolve-Path smoke) "$name.png"), [System.Drawing.Imaging.ImageFormat]::Png)
+            $g.Dispose(); $bmp.Dispose()
+            "Saved smoke\$name.png ($($b.Width)x$($b.Height))"
+          }
+          function List-Windows($title) {
+            "--- windows ($title) ---"
+            Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object ProcessName, Id, MainWindowTitle | Format-Table -AutoSize | Out-String -Width 200
+          }
+          "User: $(whoami)"
+          whoami /groups | Select-String 'Mandatory'
+          $v = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
+          "OS: $($v.ProductName) $($v.DisplayVersion) build $($v.CurrentBuild).$($v.UBR)"
+          "Session: $((Get-Process -Id $PID).SessionId)"
+          Get-Process explorer -ErrorAction SilentlyContinue | Select-Object Id, SessionId | Out-String
+
+          # Pre-seed settings: open Properties on the Essential Tweaks page (11th page) with the new tweaks enabled
+          New-Item -Path 'HKCU:\Software\ExplorerPatcher' -Force | Out-Null
+          $reg = 'HKCU:\Software\ExplorerPatcher'
+          Set-ItemProperty -Path $reg -Name 'LastSectionInProperties' -Value 11 -Type DWord
+          Set-ItemProperty -Path $reg -Name 'EssentialTaskbarVolumeScroll' -Value 1 -Type DWord
+          Set-ItemProperty -Path $reg -Name 'EssentialVolumeStep' -Value 4 -Type DWord
+          Set-ItemProperty -Path $reg -Name 'EssentialTrayIconFix' -Value 5 -Type DWord
+          Set-ItemProperty -Path $reg -Name 'EssentialDisableExtensionWarning' -Value 1 -Type DWord
+          Set-ItemProperty -Path $reg -Name 'EssentialExplorerDoubleClickUp' -Value 1 -Type DWord
+          Set-ItemProperty -Path $reg -Name 'EssentialReopenClosedTab' -Value 1 -Type DWord
+
+          Take-Screenshot 'step0_before_install'
+
+          $setup = (Resolve-Path 'build\Release\x64\ep_setup.exe').Path
+          "Installing $setup"
+          $p = Start-Process -FilePath $setup -PassThru
+          if (-not $p.WaitForExit(240000)) { "ep_setup did not exit in time"; Take-Screenshot 'step1_setup_hung'; Stop-Process -Id $p.Id -Force }
+          else { "ep_setup exit code: $($p.ExitCode)" }
+          "dxgi.dll present: $(Test-Path "$env:windir\dxgi.dll")"
+          Get-ChildItem "$env:ProgramFiles\ExplorerPatcher" -ErrorAction SilentlyContinue | Select-Object Name, Length | Out-String
+
+          if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { "Starting explorer.exe"; Start-Process explorer.exe }
+          Start-Sleep -Seconds 75
+          Get-Process explorer -ErrorAction SilentlyContinue | Select-Object Id, StartTime | Out-String
+          List-Windows 'after explorer start'
+          Take-Screenshot 'step2_desktop_after_install'
+
+          "Opening Properties"
+          Start-Process rundll32.exe -ArgumentList "`"$env:ProgramFiles\ExplorerPatcher\ep_gui.dll`",ZZGUI"
+          Start-Sleep -Seconds 25
+          List-Windows 'after properties'
+          Take-Screenshot 'step3_properties'
+
+          "Opening a File Explorer window"
+          Start-Process explorer.exe -ArgumentList "$env:SystemDrive\"
+          Start-Sleep -Seconds 15
+          List-Windows 'after file explorer'
+          Take-Screenshot 'step4_file_explorer'
+
+          "--- explorer crash events (last 15 minutes) ---"
+          Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000,1001,1026; StartTime=(Get-Date).AddMinutes(-15)} -ErrorAction SilentlyContinue |
+            Select-Object -First 10 TimeCreated, Id, ProviderName, Message | Format-List | Out-String -Width 300
+
+      - name: Upload smoke test screenshots
+        if: always() && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smoke_test_${{ steps.vars.outputs.sha_short }}
+          path: smoke/
+          if-no-files-found: warn
+
       # build/Release/x64/ep_setup.exe -> build/Release/ep_setup.exe
       # build/Release/ARM64/ep_setup.exe -> build/Release/ep_setup_arm64.exe
       - name: Stage files for release
