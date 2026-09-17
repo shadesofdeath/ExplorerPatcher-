@@ -9,6 +9,8 @@
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <shellapi.h>
+#include <uxtheme.h>
+#include <commoncontrols.h>
 #include <exdisp.h>
 #include <servprov.h>
 #include <mmdeviceapi.h>
@@ -32,6 +34,14 @@ DWORD dwEssentialTaskbarMiddleClickAction = 0;
 DWORD bEssentialHideExplorerHome = FALSE;
 DWORD bEssentialHideExplorerGallery = FALSE;
 DWORD bEssentialHideExplorerOneDrive = FALSE;
+DWORD bEssentialSingleWindowTabs = FALSE;
+DWORD bEssentialDesktopToggleIcons = FALSE;
+DWORD bEssentialHideDesktopIconText = FALSE;
+DWORD bEssentialHideShortcutArrows = FALSE;
+DWORD bEssentialFixExplorerWhiteFlash = FALSE;
+DWORD bEssentialShowAllTrayIcons = FALSE;
+DWORD bEssentialNoStartupDelay = FALSE;
+DWORD bEssentialBlockF1Help = FALSE;
 
 // GUIDs are defined locally so that the module does not depend on uuid.lib / the SDK's MIDL-generated definitions.
 static const GUID ET_CLSID_MMDeviceEnumerator = { 0xBCDE0395, 0xE52F, 0x467C, { 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E } };
@@ -83,6 +93,12 @@ static BOOL ET_IsExplorerWindowForeground(void)
 
 #pragma region "Settings"
 static void ET_ApplyNavigationPaneVisibility(HKEY hKey);
+static void ET_ApplyStartupDelay(HKEY hKey);
+static void ET_UpdateOnDemandHooks(void);
+static void ET_RefreshDesktop(BOOL bRepaint);
+static void ET_HideShortcutArrowsOnce(void);
+static void ET_OnExplorerWindowCreated(HWND hWnd);
+static void ET_OnDesktopListViewCreated(HWND hListView, HWND hDefView);
 
 static DWORD ET_ReadDword(HKEY hKey, LPCWSTR lpValueName, DWORD dwDefault)
 {
@@ -129,6 +145,25 @@ void EssentialTweaks_LoadSettings(HKEY hKey)
     bEssentialHideExplorerGallery = ET_ReadDword(hKey, L"EssentialHideExplorerGallery", 0) ? TRUE : FALSE;
     bEssentialHideExplorerOneDrive = ET_ReadDword(hKey, L"EssentialHideExplorerOneDrive", 0) ? TRUE : FALSE;
     ET_ApplyNavigationPaneVisibility(hKey);
+
+    bEssentialSingleWindowTabs = ET_ReadDword(hKey, L"EssentialSingleWindowTabs", 0) ? TRUE : FALSE;
+    bEssentialDesktopToggleIcons = ET_ReadDword(hKey, L"EssentialDesktopToggleIcons", 0) ? TRUE : FALSE;
+    BOOL bHideDesktopIconText = ET_ReadDword(hKey, L"EssentialHideDesktopIconText", 0) ? TRUE : FALSE;
+    BOOL bRepaintDesktop = (bHideDesktopIconText != (bEssentialHideDesktopIconText != FALSE));
+    bEssentialHideDesktopIconText = bHideDesktopIconText;
+    bEssentialHideShortcutArrows = ET_ReadDword(hKey, L"EssentialHideShortcutArrows", 0) ? TRUE : FALSE;
+    bEssentialFixExplorerWhiteFlash = ET_ReadDword(hKey, L"EssentialFixExplorerWhiteFlash", 0) ? TRUE : FALSE;
+    bEssentialShowAllTrayIcons = ET_ReadDword(hKey, L"EssentialShowAllTrayIcons", 0) ? TRUE : FALSE;
+    bEssentialNoStartupDelay = ET_ReadDword(hKey, L"EssentialNoStartupDelay", 0) ? TRUE : FALSE;
+    bEssentialBlockF1Help = ET_ReadDword(hKey, L"EssentialBlockF1Help", 0) ? TRUE : FALSE;
+
+    ET_ApplyStartupDelay(hKey);
+    ET_UpdateOnDemandHooks();
+    ET_RefreshDesktop(bRepaintDesktop);
+    if (bEssentialHideShortcutArrows)
+    {
+        ET_HideShortcutArrowsOnce();
+    }
 }
 #pragma endregion
 
@@ -985,16 +1020,11 @@ static void ET_EnumShellWindows(ET_ShellWindowCallback pfnCallback, LPVOID lpCon
     pShellWindows->lpVtbl->Release(pShellWindows);
 }
 
-// Returns the parsing name (file system path, or ::{CLSID} for virtual folders) of the folder shown by a browser.
-static BOOL ET_GetBrowserFolderPath(IShellBrowser* pShellBrowser, WCHAR* wszPath, size_t cch)
+// Returns the absolute PIDL of the folder shown by a browser; free it with CoTaskMemFree.
+static PIDLIST_ABSOLUTE ET_GetBrowserFolderPidl(IShellBrowser* pShellBrowser)
 {
-    BOOL bSuccess = FALSE;
+    PIDLIST_ABSOLUTE pidl = NULL;
     IShellView* pShellView = NULL;
-    if (!wszPath || cch == 0)
-    {
-        return FALSE;
-    }
-    wszPath[0] = 0;
     if (SUCCEEDED(pShellBrowser->lpVtbl->QueryActiveShellView(pShellBrowser, &pShellView)) && pShellView)
     {
         IFolderView* pFolderView = NULL;
@@ -1003,25 +1033,41 @@ static BOOL ET_GetBrowserFolderPath(IShellBrowser* pShellBrowser, WCHAR* wszPath
             IPersistFolder2* pPersistFolder2 = NULL;
             if (SUCCEEDED(pFolderView->lpVtbl->GetFolder(pFolderView, &ET_IID_IPersistFolder2, (LPVOID*)&pPersistFolder2)) && pPersistFolder2)
             {
-                PIDLIST_ABSOLUTE pidl = NULL;
-                if (SUCCEEDED(pPersistFolder2->lpVtbl->GetCurFolder(pPersistFolder2, &pidl)) && pidl)
+                if (FAILED(pPersistFolder2->lpVtbl->GetCurFolder(pPersistFolder2, &pidl)))
                 {
-                    LPWSTR pszName = NULL;
-                    if (SUCCEEDED(SHGetNameFromIDList(pidl, SIGDN_DESKTOPABSOLUTEPARSING, &pszName)) && pszName)
-                    {
-                        if (wcsncpy_s(wszPath, cch, pszName, _TRUNCATE) == 0 && wszPath[0])
-                        {
-                            bSuccess = TRUE;
-                        }
-                        CoTaskMemFree(pszName);
-                    }
-                    CoTaskMemFree(pidl);
+                    pidl = NULL;
                 }
                 pPersistFolder2->lpVtbl->Release(pPersistFolder2);
             }
             pFolderView->lpVtbl->Release(pFolderView);
         }
         pShellView->lpVtbl->Release(pShellView);
+    }
+    return pidl;
+}
+
+// Returns the parsing name (file system path, or ::{CLSID} for virtual folders) of the folder shown by a browser.
+static BOOL ET_GetBrowserFolderPath(IShellBrowser* pShellBrowser, WCHAR* wszPath, size_t cch)
+{
+    BOOL bSuccess = FALSE;
+    if (!wszPath || cch == 0)
+    {
+        return FALSE;
+    }
+    wszPath[0] = 0;
+    PIDLIST_ABSOLUTE pidl = ET_GetBrowserFolderPidl(pShellBrowser);
+    if (pidl)
+    {
+        LPWSTR pszName = NULL;
+        if (SUCCEEDED(SHGetNameFromIDList(pidl, SIGDN_DESKTOPABSOLUTEPARSING, &pszName)) && pszName)
+        {
+            if (wcsncpy_s(wszPath, cch, pszName, _TRUNCATE) == 0 && wszPath[0])
+            {
+                bSuccess = TRUE;
+            }
+            CoTaskMemFree(pszName);
+        }
+        CoTaskMemFree(pidl);
     }
     return bSuccess;
 }
@@ -1170,8 +1216,16 @@ static LRESULT CALLBACK ET_ListViewSubclassProc(HWND hWnd, UINT uMsg, WPARAM wPa
 void EssentialTweaks_OnWindowCreated(HWND hWnd, HWND hWndParent)
 {
     WCHAR wszClass[ET_CLASSNAME_CCH];
-    if (!hWnd || !hWndParent || !ET_GetClassName(hWnd, wszClass, ARRAYSIZE(wszClass)))
+    if (!hWnd || !ET_GetClassName(hWnd, wszClass, ARRAYSIZE(wszClass)))
     {
+        return;
+    }
+    if (!hWndParent)
+    {
+        if (!wcscmp(wszClass, L"CabinetWClass"))
+        {
+            ET_OnExplorerWindowCreated(hWnd);
+        }
         return;
     }
 
@@ -1185,8 +1239,14 @@ void EssentialTweaks_OnWindowCreated(HWND hWnd, HWND hWndParent)
     {
         return;
     }
-    // Only File Explorer views (the desktop also has a SHELLDLL_DefView, whose parent is not ShellTabWindowClass).
-    if (!ET_IsWindowOfClass(GetParent(hWndParent), L"ShellTabWindowClass"))
+    HWND hViewParent = GetParent(hWndParent);
+    if (bIsListView && (ET_IsWindowOfClass(hViewParent, L"Progman") || ET_IsWindowOfClass(hViewParent, L"WorkerW")))
+    {
+        ET_OnDesktopListViewCreated(hWnd, hWndParent);
+        return;
+    }
+    // The rest is for File Explorer views only.
+    if (!ET_IsWindowOfClass(hViewParent, L"ShellTabWindowClass"))
     {
         return;
     }
@@ -1340,29 +1400,54 @@ static BOOL ET_FindNewTabCallback(IShellBrowser* pShellBrowser, IDispatch* pDisp
     return TRUE;
 }
 
-static BOOL ET_OpenPathAsTab(ET_TabsContext* pContext, HWND hExplorer, const WCHAR* wszPath)
+// Navigating by PIDL also works for virtual folders (::{CLSID}...), which Navigate2 does not accept as a string.
+static BOOL ET_NavigateBrowserToPidl(IWebBrowser2* pWebBrowser, PCIDLIST_ABSOLUTE pidl)
+{
+    BOOL bSuccess = FALSE;
+    UINT cbPidl = ILGetSize(pidl);
+    SAFEARRAY* pArray = cbPidl ? SafeArrayCreateVector(VT_UI1, 0, cbPidl) : NULL;
+    if (pArray)
+    {
+        void* pData = NULL;
+        if (SUCCEEDED(SafeArrayAccessData(pArray, &pData)) && pData)
+        {
+            memcpy(pData, pidl, cbPidl);
+            SafeArrayUnaccessData(pArray);
+
+            VARIANT vTarget, vEmpty;
+            VariantInit(&vTarget);
+            VariantInit(&vEmpty);
+            vTarget.vt = VT_ARRAY | VT_UI1;
+            vTarget.parray = pArray;
+            bSuccess = SUCCEEDED(pWebBrowser->lpVtbl->Navigate2(pWebBrowser, &vTarget, &vEmpty, &vEmpty, &vEmpty, &vEmpty));
+        }
+        SafeArrayDestroy(pArray);
+    }
+    return bSuccess;
+}
+
+// pScratch: ET_MAX_TABS entries of working memory owned by the caller.
+static BOOL ET_OpenPidlAsTab(ET_TabInfo* pScratch, HWND hExplorer, PCIDLIST_ABSOLUTE pidl)
 {
     // The new tab command has to go to the tab strip (ShellTabWindowClass), not the top-level window;
     // otherwise the tab is not registered with IShellWindows.
     HWND hTabStrip = FindWindowExW(hExplorer, NULL, L"ShellTabWindowClass", NULL);
-    if (!hTabStrip)
+    if (!hTabStrip || !pScratch || !pidl)
     {
         return FALSE;
     }
 
     // Snapshot the tabs that exist now, so that the new one can be told apart afterwards.
-    pContext->cCurrent = ET_CollectTabs(pContext->current, ET_MAX_TABS);
+    ET_FindNewTabContext findContext;
+    findContext.pBefore = pScratch;
+    findContext.cBefore = ET_CollectTabs(pScratch, ET_MAX_TABS);
+    findContext.pNewTab = NULL;
 
     DWORD_PTR dwResult = 0;
     if (!SendMessageTimeoutW(hTabStrip, WM_COMMAND, ET_NEW_TAB_COMMAND, 0, SMTO_ABORTIFHUNG | SMTO_NORMAL, 3000, &dwResult))
     {
         return FALSE;
     }
-
-    ET_FindNewTabContext findContext;
-    findContext.pBefore = pContext->current;
-    findContext.cBefore = pContext->cCurrent;
-    findContext.pNewTab = NULL;
 
     DWORD dwDeadline = GetTickCount() + 3000;
     while (!findContext.pNewTab && (LONG)(dwDeadline - GetTickCount()) > 0)
@@ -1379,20 +1464,39 @@ static BOOL ET_OpenPathAsTab(ET_TabsContext* pContext, HWND hExplorer, const WCH
     IWebBrowser2* pWebBrowser = NULL;
     if (SUCCEEDED(findContext.pNewTab->lpVtbl->QueryInterface(findContext.pNewTab, &ET_IID_IWebBrowser2, (LPVOID*)&pWebBrowser)) && pWebBrowser)
     {
-        VARIANT vPath, vEmpty;
-        VariantInit(&vPath);
-        VariantInit(&vEmpty);
-        vPath.vt = VT_BSTR;
-        vPath.bstrVal = SysAllocString(wszPath);
-        if (vPath.bstrVal)
-        {
-            bSuccess = SUCCEEDED(pWebBrowser->lpVtbl->Navigate2(pWebBrowser, &vPath, &vEmpty, &vEmpty, &vEmpty, &vEmpty));
-            SysFreeString(vPath.bstrVal);
-        }
+        bSuccess = ET_NavigateBrowserToPidl(pWebBrowser, pidl);
         pWebBrowser->lpVtbl->Release(pWebBrowser);
     }
     findContext.pNewTab->lpVtbl->Release(findContext.pNewTab);
     return bSuccess;
+}
+
+static BOOL ET_OpenPathAsTab(ET_TabsContext* pContext, HWND hExplorer, const WCHAR* wszPath)
+{
+    PIDLIST_ABSOLUTE pidl = NULL;
+    if (FAILED(SHParseDisplayName(wszPath, NULL, &pidl, 0, NULL)) || !pidl)
+    {
+        return FALSE;
+    }
+    BOOL bSuccess = ET_OpenPidlAsTab(pContext->current, hExplorer, pidl);
+    CoTaskMemFree(pidl);
+    return bSuccess;
+}
+
+// Drops the most recent history entry when it is the given folder.
+static void ET_ForgetClosedTab(const WCHAR* wszPath)
+{
+    ET_TabsContext* pContext = g_pEssentialTabs;
+    if (!pContext)
+    {
+        return;
+    }
+    EnterCriticalSection(&pContext->cs);
+    if (pContext->cHistory > 0 && !_wcsicmp(pContext->history[pContext->cHistory - 1], wszPath))
+    {
+        pContext->cHistory--;
+    }
+    LeaveCriticalSection(&pContext->cs);
 }
 
 static void ET_ReopenLastClosedTab(ET_TabsContext* pContext)
@@ -1551,6 +1655,963 @@ static void ET_StartReopenClosedTab(void)
 }
 #pragma endregion
 
+#pragma region "Open new File Explorer windows as tabs"
+// Port of "Explorer Single Window Tabs": a new File Explorer window is kept invisible while a worker thread reads
+// the folder it shows, opens that folder as a tab of an existing window and then closes the new window. Holding
+// Shift while the window opens bypasses the redirection. Control Panel and search windows are left alone.
+#define ET_REDIRECT_PROP L"EPEssentialTabRedirect"
+#define ET_CONTROL_PANEL_CLSID L"::{26EE0668-A00A-44D7-9371-BEB064C98683}"
+
+typedef struct _ET_FindWindowFolderContext
+{
+    HWND hRoot;
+    PIDLIST_ABSOLUTE pidl;
+} ET_FindWindowFolderContext;
+
+static BOOL ET_FindWindowFolderCallback(IShellBrowser* pShellBrowser, IDispatch* pDispatch, HWND hBrowserWnd, LPVOID lpContext)
+{
+    ET_FindWindowFolderContext* pContext = (ET_FindWindowFolderContext*)lpContext;
+    UNREFERENCED_PARAMETER(pDispatch);
+    if (GetAncestor(hBrowserWnd, GA_ROOT) == pContext->hRoot)
+    {
+        pContext->pidl = ET_GetBrowserFolderPidl(pShellBrowser);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static BOOL ET_IsRedirectableFolder(const WCHAR* wszPath)
+{
+    return wszPath[0] &&
+        !StrStrIW(wszPath, ET_CONTROL_PANEL_CLSID) &&
+        _wcsnicmp(wszPath, L"search-ms:", 10) != 0 &&
+        _wcsnicmp(wszPath, L"shell:", 6) != 0;
+}
+
+typedef struct _ET_FindPrimaryWindowContext
+{
+    HWND hExclude;
+    HWND hPrimary;
+} ET_FindPrimaryWindowContext;
+
+static BOOL ET_FindPrimaryWindowCallback(IShellBrowser* pShellBrowser, IDispatch* pDispatch, HWND hBrowserWnd, LPVOID lpContext)
+{
+    ET_FindPrimaryWindowContext* pContext = (ET_FindPrimaryWindowContext*)lpContext;
+    UNREFERENCED_PARAMETER(pDispatch);
+    HWND hRoot = GetAncestor(hBrowserWnd, GA_ROOT);
+    if (!hRoot || hRoot == pContext->hExclude || !IsWindowVisible(hRoot) || GetPropW(hRoot, ET_REDIRECT_PROP))
+    {
+        return TRUE;
+    }
+    WCHAR wszPath[ET_PATH_CCH];
+    if (ET_GetBrowserFolderPath(pShellBrowser, wszPath, ARRAYSIZE(wszPath)) && ET_IsRedirectableFolder(wszPath))
+    {
+        pContext->hPrimary = hRoot;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void ET_AbortTabRedirect(HWND hWnd)
+{
+    if (!IsWindow(hWnd))
+    {
+        return;
+    }
+    RemovePropW(hWnd, ET_REDIRECT_PROP);
+    LONG_PTR lExStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
+    if (lExStyle & WS_EX_LAYERED)
+    {
+        SetWindowLongPtrW(hWnd, GWL_EXSTYLE, lExStyle & ~WS_EX_LAYERED);
+    }
+    SetWindowPos(hWnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    RedrawWindow(hWnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+}
+
+static DWORD WINAPI ET_TabRedirectThread(LPVOID lpParam)
+{
+    HWND hNewWnd = (HWND)lpParam;
+    if (FAILED(CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)))
+    {
+        ET_AbortTabRedirect(hNewWnd);
+        return 1;
+    }
+
+    BOOL bRedirected = FALSE;
+    ET_TabInfo* pScratch = (ET_TabInfo*)calloc(ET_MAX_TABS, sizeof(ET_TabInfo));
+
+    // Wait for the new window to finish its first navigation.
+    ET_FindWindowFolderContext folderContext;
+    folderContext.hRoot = hNewWnd;
+    folderContext.pidl = NULL;
+    for (int i = 0; i < 60 && !folderContext.pidl && IsWindow(hNewWnd); ++i)
+    {
+        Sleep(50);
+        ET_EnumShellWindows(ET_FindWindowFolderCallback, &folderContext);
+    }
+
+    if (pScratch && folderContext.pidl && IsWindow(hNewWnd))
+    {
+        WCHAR wszPath[ET_PATH_CCH];
+        wszPath[0] = 0;
+        LPWSTR pszName = NULL;
+        if (SUCCEEDED(SHGetNameFromIDList(folderContext.pidl, SIGDN_DESKTOPABSOLUTEPARSING, &pszName)) && pszName)
+        {
+            wcsncpy_s(wszPath, ARRAYSIZE(wszPath), pszName, _TRUNCATE);
+            CoTaskMemFree(pszName);
+        }
+        if (ET_IsRedirectableFolder(wszPath))
+        {
+            ET_FindPrimaryWindowContext primaryContext;
+            primaryContext.hExclude = hNewWnd;
+            primaryContext.hPrimary = NULL;
+            ET_EnumShellWindows(ET_FindPrimaryWindowCallback, &primaryContext);
+            // The tab is opened first; the new window is only closed once that worked.
+            if (primaryContext.hPrimary && ET_OpenPidlAsTab(pScratch, primaryContext.hPrimary, folderContext.pidl))
+            {
+                bRedirected = TRUE;
+                PostMessageW(hNewWnd, WM_CLOSE, 0, 0);
+                if (IsIconic(primaryContext.hPrimary))
+                {
+                    ShowWindowAsync(primaryContext.hPrimary, SW_RESTORE);
+                }
+                SetForegroundWindow(primaryContext.hPrimary);
+
+                // The closed window is not a "closed tab" the user would want to reopen.
+                Sleep(1500);
+                ET_ForgetClosedTab(wszPath);
+            }
+        }
+    }
+
+    if (!bRedirected)
+    {
+        ET_AbortTabRedirect(hNewWnd);
+    }
+    if (folderContext.pidl)
+    {
+        CoTaskMemFree(folderContext.pidl);
+    }
+    free(pScratch);
+    CoUninitialize();
+    return 0;
+}
+
+static void ET_OnExplorerWindowCreated(HWND hWnd)
+{
+    if (!bEssentialSingleWindowTabs || !IsWindows11Version22H2OrHigher())
+    {
+        return;
+    }
+    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    {
+        return;
+    }
+    // Is there another File Explorer window that could take the tab?
+    BOOL bHaveOther = FALSE;
+    HWND hOther = NULL;
+    for (int i = 0; i < 64 && !bHaveOther; ++i)
+    {
+        hOther = FindWindowExW(NULL, hOther, L"CabinetWClass", NULL);
+        if (!hOther)
+        {
+            break;
+        }
+        bHaveOther = hOther != hWnd && IsWindowVisible(hOther) && !GetPropW(hOther, ET_REDIRECT_PROP);
+    }
+    if (!bHaveOther)
+    {
+        return;
+    }
+
+    // Fully transparent instead of hidden: the window still registers with IShellWindows, which is how the
+    // worker thread learns which folder it shows.
+    SetPropW(hWnd, ET_REDIRECT_PROP, (HANDLE)1);
+    SetWindowLongPtrW(hWnd, GWL_EXSTYLE, GetWindowLongPtrW(hWnd, GWL_EXSTYLE) | WS_EX_LAYERED);
+    SetLayeredWindowAttributes(hWnd, 0, 0, LWA_ALPHA);
+
+    HANDLE hThread = CreateThread(NULL, 0, ET_TabRedirectThread, (LPVOID)hWnd, 0, NULL);
+    if (hThread)
+    {
+        CloseHandle(hThread);
+    }
+    else
+    {
+        ET_AbortTabRedirect(hWnd);
+    }
+}
+#pragma endregion
+
+#pragma region "Desktop: double click to hide icons, hide icon labels"
+// Ports of "ZenDesktop: Desktop Icon Toggle" (manual toggle only) and "Hide Desktop Icon Text and Shortcut Arrows".
+// The desktop list view and its SHELLDLL_DefView parent are subclassed when they are created.
+static HWND g_hEssentialDesktopListView = NULL;
+static HWND g_hEssentialHiddenDesktopListView = NULL;
+// Thread that is currently painting the desktop list view (0 = none); read by the text drawing hooks.
+static volatile LONG g_lEssentialDesktopPaintThread = 0;
+
+// WM_LBUTTONDBLCLK is only sent to windows whose class has CS_DBLCLKS; otherwise two button presses are paired.
+static BOOL ET_IsDesktopDoubleClick(HWND hWnd, UINT uMsg, LPARAM lParam)
+{
+    static DWORD dwLastClickTime = 0;
+    static POINT ptLastClick;
+
+    if (uMsg == WM_LBUTTONDBLCLK)
+    {
+        return TRUE;
+    }
+    if (uMsg != WM_LBUTTONDOWN || (GetClassLongPtrW(hWnd, GCL_STYLE) & CS_DBLCLKS))
+    {
+        return FALSE;
+    }
+    DWORD dwNow = GetTickCount();
+    POINT pt;
+    pt.x = GET_X_LPARAM(lParam);
+    pt.y = GET_Y_LPARAM(lParam);
+    if (dwNow - dwLastClickTime <= GetDoubleClickTime() &&
+        abs(pt.x - ptLastClick.x) <= GetSystemMetrics(SM_CXDOUBLECLK) / 2 &&
+        abs(pt.y - ptLastClick.y) <= GetSystemMetrics(SM_CYDOUBLECLK) / 2)
+    {
+        dwLastClickTime = 0;
+        return TRUE;
+    }
+    dwLastClickTime = dwNow;
+    ptLastClick = pt;
+    return FALSE;
+}
+
+static LRESULT CALLBACK ET_DesktopListViewSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+{
+    UNREFERENCED_PARAMETER(dwRefData);
+    if (uMsg == WM_NCDESTROY)
+    {
+        RemoveWindowSubclass(hWnd, ET_DesktopListViewSubclassProc, uIdSubclass);
+        if (g_hEssentialDesktopListView == hWnd) g_hEssentialDesktopListView = NULL;
+        if (g_hEssentialHiddenDesktopListView == hWnd) g_hEssentialHiddenDesktopListView = NULL;
+    }
+    else if ((uMsg == WM_LBUTTONDBLCLK || uMsg == WM_LBUTTONDOWN) && bEssentialDesktopToggleIcons)
+    {
+        if (ET_IsDesktopDoubleClick(hWnd, uMsg, lParam))
+        {
+            LVHITTESTINFO hitTestInfo;
+            ZeroMemory(&hitTestInfo, sizeof(hitTestInfo));
+            hitTestInfo.pt.x = GET_X_LPARAM(lParam);
+            hitTestInfo.pt.y = GET_Y_LPARAM(lParam);
+            if (ListView_HitTest(hWnd, &hitTestInfo) == -1)
+            {
+                g_hEssentialHiddenDesktopListView = hWnd;
+                ShowWindow(hWnd, SW_HIDE);
+                return 0;
+            }
+        }
+    }
+    else if (uMsg == WM_PAINT && bEssentialHideDesktopIconText)
+    {
+        InterlockedExchange(&g_lEssentialDesktopPaintThread, (LONG)GetCurrentThreadId());
+        LRESULT lResult = DefSubclassProc(hWnd, uMsg, wParam, lParam);
+        InterlockedExchange(&g_lEssentialDesktopPaintThread, 0);
+        return lResult;
+    }
+    return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
+
+// While the icons are hidden the clicks land on the SHELLDLL_DefView window behind them.
+static LRESULT CALLBACK ET_DesktopDefViewSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+{
+    UNREFERENCED_PARAMETER(dwRefData);
+    if (uMsg == WM_NCDESTROY)
+    {
+        RemoveWindowSubclass(hWnd, ET_DesktopDefViewSubclassProc, uIdSubclass);
+    }
+    else if ((uMsg == WM_LBUTTONDBLCLK || uMsg == WM_LBUTTONDOWN) && g_hEssentialHiddenDesktopListView)
+    {
+        HWND hListView = g_hEssentialHiddenDesktopListView;
+        if (GetParent(hListView) == hWnd && !IsWindowVisible(hListView) && ET_IsDesktopDoubleClick(hWnd, uMsg, lParam))
+        {
+            g_hEssentialHiddenDesktopListView = NULL;
+            ShowWindow(hListView, SW_SHOW);
+            return 0;
+        }
+    }
+    return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
+
+static void ET_OnDesktopListViewCreated(HWND hListView, HWND hDefView)
+{
+    g_hEssentialDesktopListView = hListView;
+    SetWindowSubclass(hListView, ET_DesktopListViewSubclassProc, (UINT_PTR)ET_DesktopListViewSubclassProc, 0);
+    SetWindowSubclass(hDefView, ET_DesktopDefViewSubclassProc, (UINT_PTR)ET_DesktopDefViewSubclassProc, 0);
+}
+
+// Called when the settings were (re)loaded; may run on any thread.
+static void ET_RefreshDesktop(BOOL bRepaint)
+{
+    HWND hHidden = g_hEssentialHiddenDesktopListView;
+    if (hHidden && !bEssentialDesktopToggleIcons)
+    {
+        // The option was turned off while the icons were hidden: bring them back.
+        g_hEssentialHiddenDesktopListView = NULL;
+        ShowWindowAsync(hHidden, SW_SHOW);
+    }
+    HWND hListView = g_hEssentialDesktopListView;
+    if (bRepaint && hListView)
+    {
+        InvalidateRect(hListView, NULL, TRUE);
+    }
+}
+
+typedef int(WINAPI* ET_DrawTextW_t)(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format);
+typedef HRESULT(WINAPI* ET_DrawThemeTextEx_t)(HTHEME hTheme, HDC hdc, int iPartId, int iStateId, LPCWSTR pszText, int cchText, DWORD dwTextFlags, LPRECT pRect, const DTTOPTS* pOptions);
+static ET_DrawTextW_t ET_DrawTextWFunc = NULL;
+static ET_DrawThemeTextEx_t ET_DrawThemeTextExFunc = NULL;
+
+static BOOL ET_IsPaintingDesktopLabels(void)
+{
+    LONG lThread = g_lEssentialDesktopPaintThread;
+    return lThread && bEssentialHideDesktopIconText && lThread == (LONG)GetCurrentThreadId();
+}
+
+static int WINAPI ET_DrawTextWHook(HDC hdc, LPCWSTR lpchText, int cchText, LPRECT lprc, UINT format)
+{
+    if (lpchText && ET_IsPaintingDesktopLabels())
+    {
+        return ET_DrawTextWFunc(hdc, L"", 0, lprc, format);
+    }
+    return ET_DrawTextWFunc(hdc, lpchText, cchText, lprc, format);
+}
+
+static HRESULT WINAPI ET_DrawThemeTextExHook(HTHEME hTheme, HDC hdc, int iPartId, int iStateId, LPCWSTR pszText, int cchText, DWORD dwTextFlags, LPRECT pRect, const DTTOPTS* pOptions)
+{
+    if (pszText && ET_IsPaintingDesktopLabels())
+    {
+        return ET_DrawThemeTextExFunc(hTheme, hdc, iPartId, iStateId, L"", 0, dwTextFlags, pRect, pOptions);
+    }
+    return ET_DrawThemeTextExFunc(hTheme, hdc, iPartId, iStateId, pszText, cchText, dwTextFlags, pRect, pOptions);
+}
+#pragma endregion
+
+#pragma region "Hide shortcut arrows"
+// The shortcut overlay of the process' system image lists is replaced with a fully transparent icon. The image
+// lists are per process, so the arrows come back when the option is off and File Explorer is restarted.
+static const GUID ET_IID_IImageList = { 0x46EB5926, 0x582E, 0x4017, { 0x9F, 0xDF, 0xE8, 0x99, 0x8D, 0xAA, 0x09, 0x50 } };
+#define ET_IDO_SHGIOI_LINK 0x0FFFFFFE
+static volatile LONG g_lEssentialShortcutArrowsHidden = 0;
+
+static HICON ET_CreateTransparentIcon(int cx, int cy)
+{
+    if (cx <= 0 || cy <= 0 || cx > 1024 || cy > 1024)
+    {
+        return NULL;
+    }
+    BITMAPINFO bi;
+    ZeroMemory(&bi, sizeof(bi));
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = cx;
+    bi.bmiHeader.biHeight = cy;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    HICON hIcon = NULL;
+    void* pBits = NULL;
+    HDC hdc = GetDC(NULL);
+    HBITMAP hColor = CreateDIBSection(hdc, &bi, DIB_RGB_COLORS, &pBits, NULL, 0);
+    ReleaseDC(NULL, hdc);
+    if (hColor && pBits)
+    {
+        ZeroMemory(pBits, (size_t)cx * cy * 4);
+        size_t cbMask = (size_t)(((cx + 15) / 16) * 2) * cy;
+        BYTE* pMask = (BYTE*)malloc(cbMask);
+        if (pMask)
+        {
+            memset(pMask, 0xFF, cbMask);
+            HBITMAP hMask = CreateBitmap(cx, cy, 1, 1, pMask);
+            if (hMask)
+            {
+                ICONINFO ii;
+                ZeroMemory(&ii, sizeof(ii));
+                ii.fIcon = TRUE;
+                ii.hbmColor = hColor;
+                ii.hbmMask = hMask;
+                hIcon = CreateIconIndirect(&ii);
+                DeleteObject(hMask);
+            }
+            free(pMask);
+        }
+    }
+    if (hColor)
+    {
+        DeleteObject(hColor);
+    }
+    return hIcon;
+}
+
+static DWORD WINAPI ET_HideShortcutArrowsThread(LPVOID lpParam)
+{
+    UNREFERENCED_PARAMETER(lpParam);
+    // The system image list is initialized by the shell; wait for the desktop before touching it.
+    for (int i = 0; i < 240 && !FindWindowW(L"Progman", NULL); ++i)
+    {
+        Sleep(500);
+    }
+
+    int iLinkOverlay = SHGetIconOverlayIndexW(NULL, ET_IDO_SHGIOI_LINK);
+    if (iLinkOverlay <= 0)
+    {
+        InterlockedExchange(&g_lEssentialShortcutArrowsHidden, 0);
+        return 0;
+    }
+    static const int shilSizes[] = { SHIL_LARGE, SHIL_SMALL, SHIL_EXTRALARGE, SHIL_SYSSMALL, SHIL_JUMBO };
+    for (UINT i = 0; i < ARRAYSIZE(shilSizes); ++i)
+    {
+        IImageList* pImageList = NULL;
+        if (FAILED(SHGetImageList(shilSizes[i], &ET_IID_IImageList, (void**)&pImageList)) || !pImageList)
+        {
+            continue;
+        }
+        int cx = 0, cy = 0;
+        if (SUCCEEDED(pImageList->lpVtbl->GetIconSize(pImageList, &cx, &cy)))
+        {
+            HICON hBlank = ET_CreateTransparentIcon(cx, cy);
+            if (hBlank)
+            {
+                int iIndex = -1;
+                if (SUCCEEDED(pImageList->lpVtbl->ReplaceIcon(pImageList, -1, hBlank, &iIndex)) && iIndex >= 0)
+                {
+                    pImageList->lpVtbl->SetOverlayImage(pImageList, iIndex, iLinkOverlay);
+                }
+                DestroyIcon(hBlank);
+            }
+        }
+        pImageList->lpVtbl->Release(pImageList);
+    }
+    SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+    return 0;
+}
+
+static void ET_HideShortcutArrowsOnce(void)
+{
+    if (InterlockedCompareExchange(&g_lEssentialShortcutArrowsHidden, 1, 0) != 0)
+    {
+        return;
+    }
+    HANDLE hThread = CreateThread(NULL, 0, ET_HideShortcutArrowsThread, NULL, 0, NULL);
+    if (hThread)
+    {
+        CloseHandle(hThread);
+    }
+    else
+    {
+        InterlockedExchange(&g_lEssentialShortcutArrowsHidden, 0);
+    }
+}
+#pragma endregion
+
+#pragma region "Fix white flashes in File Explorer (dark mode)"
+// Port of "Fix white flashes in explorer": in dark mode, File Explorer fills an off-screen surface with white and
+// blits it to the DirectUIHWND view before the real content is ready. The white fill is remembered per thread, and
+// the matching blit (plus up to two follow-ups) is dropped.
+typedef int(WINAPI* ET_FillRect_t)(HDC hdc, const RECT* lprc, HBRUSH hbr);
+typedef BOOL(WINAPI* ET_BitBlt_t)(HDC hdcDest, int x, int y, int cx, int cy, HDC hdcSrc, int x1, int y1, DWORD rop);
+typedef BOOL(WINAPI* ET_ShouldAppsUseDarkMode_t)(void);
+static ET_FillRect_t ET_FillRectFunc = NULL;
+static ET_BitBlt_t ET_BitBltFunc = NULL;
+static ET_ShouldAppsUseDarkMode_t ET_ShouldAppsUseDarkModeFunc = NULL;
+
+typedef struct _ET_RecentWhiteFill
+{
+    HDC hdc;
+    int w;
+    int h;
+    DWORD dwTick;
+} ET_RecentWhiteFill;
+
+typedef struct _ET_FollowupBlock
+{
+    HWND hWndDest;
+    HDC hdcSrc;
+    int cx;
+    int cy;
+    DWORD dwTick;
+    int nBlocksLeft;
+    BOOL bArmed;
+} ET_FollowupBlock;
+
+static __declspec(thread) ET_RecentWhiteFill t_essentialRecentFills[32];
+static __declspec(thread) ET_FollowupBlock t_essentialFollowups[8];
+
+static BOOL ET_IsWhiteFlashFixActive(void)
+{
+    return bEssentialFixExplorerWhiteFlash && ET_ShouldAppsUseDarkModeFunc && ET_ShouldAppsUseDarkModeFunc();
+}
+
+static BOOL ET_IsCandidateFlashSize(int w, int h)
+{
+    return w >= 80 && h >= 50 && (w * h) >= 6000;
+}
+
+static BOOL ET_IsWhiteishBrush(HBRUSH hBrush)
+{
+    LOGBRUSH logBrush;
+    if (!hBrush || GetObjectW(hBrush, sizeof(logBrush), &logBrush) != sizeof(logBrush) || logBrush.lbStyle != BS_SOLID)
+    {
+        return FALSE;
+    }
+    return GetRValue(logBrush.lbColor) >= 230 && GetGValue(logBrush.lbColor) >= 230 && GetBValue(logBrush.lbColor) >= 230;
+}
+
+static int ET_FlashTolerance(int nSize, int nSmall, int nMedium, int nLarge)
+{
+    return nSize < 180 ? nSmall : (nSize < 300 ? nMedium : nLarge);
+}
+
+static void ET_RememberWhiteFill(HDC hdc, int w, int h)
+{
+    DWORD dwNow = GetTickCount();
+    UINT uBest = 0;
+    DWORD dwOldest = t_essentialRecentFills[0].dwTick;
+    for (UINT i = 0; i < ARRAYSIZE(t_essentialRecentFills); ++i)
+    {
+        if (t_essentialRecentFills[i].hdc == hdc)
+        {
+            uBest = i;
+            break;
+        }
+        if (t_essentialRecentFills[i].dwTick < dwOldest)
+        {
+            dwOldest = t_essentialRecentFills[i].dwTick;
+            uBest = i;
+        }
+    }
+    t_essentialRecentFills[uBest].hdc = hdc;
+    t_essentialRecentFills[uBest].w = w;
+    t_essentialRecentFills[uBest].h = h;
+    t_essentialRecentFills[uBest].dwTick = dwNow;
+}
+
+// Returns TRUE (and forgets the fill) when the source DC was recently filled with white at about this size.
+static BOOL ET_ConsumeRecentWhiteFill(HDC hdc, int w, int h)
+{
+    DWORD dwNow = GetTickCount();
+    BOOL bMatch = FALSE;
+    for (UINT i = 0; i < ARRAYSIZE(t_essentialRecentFills); ++i)
+    {
+        ET_RecentWhiteFill* pFill = &t_essentialRecentFills[i];
+        if (pFill->hdc != hdc || dwNow - pFill->dwTick > 650)
+        {
+            continue;
+        }
+        if (abs(pFill->w - w) <= ET_FlashTolerance(w, 24, 18, 12) && abs(pFill->h - h) <= ET_FlashTolerance(h, 24, 18, 12))
+        {
+            bMatch = TRUE;
+            break;
+        }
+    }
+    if (bMatch)
+    {
+        for (UINT i = 0; i < ARRAYSIZE(t_essentialRecentFills); ++i)
+        {
+            if (t_essentialRecentFills[i].hdc == hdc)
+            {
+                ZeroMemory(&t_essentialRecentFills[i], sizeof(t_essentialRecentFills[i]));
+            }
+        }
+    }
+    return bMatch;
+}
+
+static void ET_ArmFollowupBlock(HWND hWndDest, HDC hdcSrc, int cx, int cy)
+{
+    DWORD dwNow = GetTickCount();
+    UINT uBest = 0;
+    DWORD dwOldest = t_essentialFollowups[0].dwTick;
+    for (UINT i = 0; i < ARRAYSIZE(t_essentialFollowups); ++i)
+    {
+        if (t_essentialFollowups[i].bArmed && t_essentialFollowups[i].hWndDest == hWndDest)
+        {
+            uBest = i;
+            break;
+        }
+        if (!t_essentialFollowups[i].bArmed)
+        {
+            uBest = i;
+            break;
+        }
+        if (t_essentialFollowups[i].dwTick < dwOldest)
+        {
+            dwOldest = t_essentialFollowups[i].dwTick;
+            uBest = i;
+        }
+    }
+    t_essentialFollowups[uBest].hWndDest = hWndDest;
+    t_essentialFollowups[uBest].hdcSrc = hdcSrc;
+    t_essentialFollowups[uBest].cx = cx;
+    t_essentialFollowups[uBest].cy = cy;
+    t_essentialFollowups[uBest].dwTick = dwNow;
+    t_essentialFollowups[uBest].nBlocksLeft = 2;
+    t_essentialFollowups[uBest].bArmed = TRUE;
+}
+
+static BOOL ET_ShouldBlockFollowupBlit(HWND hWndDest, HDC hdcSrc, int cx, int cy)
+{
+    DWORD dwNow = GetTickCount();
+    for (UINT i = 0; i < ARRAYSIZE(t_essentialFollowups); ++i)
+    {
+        ET_FollowupBlock* pBlock = &t_essentialFollowups[i];
+        if (!pBlock->bArmed)
+        {
+            continue;
+        }
+        DWORD dwAge = dwNow - pBlock->dwTick;
+        if (dwAge > 120 || pBlock->nBlocksLeft <= 0)
+        {
+            pBlock->bArmed = FALSE;
+            continue;
+        }
+        if (pBlock->hWndDest != hWndDest ||
+            abs(pBlock->cx - cx) > ET_FlashTolerance(cx, 28, 20, 14) ||
+            abs(pBlock->cy - cy) > ET_FlashTolerance(cy, 28, 20, 14))
+        {
+            continue;
+        }
+        if (pBlock->hdcSrc != hdcSrc && dwAge > 45)
+        {
+            continue;
+        }
+        pBlock->hdcSrc = hdcSrc;
+        pBlock->cx = cx;
+        pBlock->cy = cy;
+        pBlock->dwTick = dwNow;
+        if (--pBlock->nBlocksLeft <= 0)
+        {
+            pBlock->bArmed = FALSE;
+        }
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// The blit has to target (nearly) the whole client area of a File Explorer DirectUIHWND view.
+static BOOL ET_IsExplorerViewSurfaceBlit(HWND hWndDest, int x, int y, int cx, int cy)
+{
+    RECT rcClient;
+    if (!hWndDest || !ET_IsWindowOfClass(hWndDest, L"DirectUIHWND"))
+    {
+        return FALSE;
+    }
+    HWND hRoot = GetAncestor(hWndDest, GA_ROOT);
+    if (!ET_IsWindowOfClass(hRoot, L"CabinetWClass") && !ET_IsWindowOfClass(hRoot, L"ExploreWClass"))
+    {
+        return FALSE;
+    }
+    if (!GetClientRect(hWndDest, &rcClient))
+    {
+        return FALSE;
+    }
+    int nClientW = rcClient.right - rcClient.left, nClientH = rcClient.bottom - rcClient.top;
+    if (nClientW <= 0 || nClientH <= 0 || abs(x) > 8 || abs(y) > 8)
+    {
+        return FALSE;
+    }
+    int nWidthSlack = max(24, nClientW / 8), nHeightSlack = max(24, nClientH / 8);
+    if (cx < nClientW - nWidthSlack || cy < nClientH - nHeightSlack)
+    {
+        return FALSE;
+    }
+    return (LONGLONG)cx * cy * 100 >= (LONGLONG)nClientW * nClientH * 70;
+}
+
+static int WINAPI ET_FillRectHook(HDC hdc, const RECT* lprc, HBRUSH hbr)
+{
+    if (lprc && hbr && ET_IsWhiteFlashFixActive())
+    {
+        int w = lprc->right - lprc->left, h = lprc->bottom - lprc->top;
+        // Only memory DCs (no window) are of interest.
+        if (ET_IsCandidateFlashSize(w, h) && !WindowFromDC(hdc) && ET_IsWhiteishBrush(hbr))
+        {
+            ET_RememberWhiteFill(hdc, w, h);
+        }
+    }
+    return ET_FillRectFunc(hdc, lprc, hbr);
+}
+
+static BOOL WINAPI ET_BitBltHook(HDC hdcDest, int x, int y, int cx, int cy, HDC hdcSrc, int x1, int y1, DWORD rop)
+{
+    if (rop == SRCCOPY && ET_IsCandidateFlashSize(cx, cy) && ET_IsWhiteFlashFixActive())
+    {
+        HWND hWndDest = WindowFromDC(hdcDest);
+        if (ET_IsExplorerViewSurfaceBlit(hWndDest, x, y, cx, cy))
+        {
+            if (ET_ShouldBlockFollowupBlit(hWndDest, hdcSrc, cx, cy))
+            {
+                return TRUE;
+            }
+            if (ET_ConsumeRecentWhiteFill(hdcSrc, cx, cy))
+            {
+                ET_ArmFollowupBlock(hWndDest, hdcSrc, cx, cy);
+                return TRUE;
+            }
+        }
+    }
+    return ET_BitBltFunc(hdcDest, x, y, cx, cy, hdcSrc, x1, y1, rop);
+}
+#pragma endregion
+
+#pragma region "Always show all tray icons"
+// Port of "Always show all taskbar tray icons": Windows 11 keeps one "IsPromoted" value per tray icon under
+// HKCU\Control Panel\NotifyIconSettings\<id>. While the option is on, reads of that value return 1 and writes to it
+// are swallowed, so the user's own choices are still there when the option is turned off again.
+typedef LSTATUS(WINAPI* ET_RegGetValueW_t)(HKEY hkey, LPCWSTR lpSubKey, LPCWSTR lpValue, DWORD dwFlags, LPDWORD pdwType, PVOID pvData, LPDWORD pcbData);
+typedef LSTATUS(WINAPI* ET_RegSetValueExW_t)(HKEY hKey, LPCWSTR lpValueName, DWORD Reserved, DWORD dwType, const BYTE* lpData, DWORD cbData);
+typedef LONG(NTAPI* ET_NtQueryKey_t)(HANDLE KeyHandle, int KeyInformationClass, PVOID KeyInformation, ULONG Length, PULONG ResultLength);
+static ET_RegGetValueW_t ET_RegGetValueWFunc = NULL;
+static ET_RegSetValueExW_t ET_RegSetValueExWFunc = NULL;
+static ET_NtQueryKey_t ET_NtQueryKeyFunc = NULL;
+
+// TRUE when the key is \REGISTRY\USER\<sid>\Control Panel\NotifyIconSettings\<id>.
+static BOOL ET_IsNotifyIconSettingsKey(HKEY hKey)
+{
+    struct
+    {
+        ULONG NameLength;
+        WCHAR Name[300];
+    } info;
+    static const WCHAR wszPrefix[] = L"\\REGISTRY\\USER\\";
+    static const WCHAR wszMiddle[] = L"\\Control Panel\\NotifyIconSettings\\";
+    ULONG cbResult = 0;
+
+    // Predefined keys (HKEY_CURRENT_USER, ...) are not real handles; NtQueryKey simply fails for them.
+    if (!hKey || !ET_NtQueryKeyFunc)
+    {
+        return FALSE;
+    }
+    // 3 = KeyNameInformation; longer names cannot be the key in question, so a failure is a "no".
+    if (ET_NtQueryKeyFunc(hKey, 3, &info, sizeof(info) - sizeof(WCHAR), &cbResult) != 0)
+    {
+        return FALSE;
+    }
+    ULONG cch = info.NameLength / sizeof(WCHAR);
+    if (cch >= ARRAYSIZE(info.Name))
+    {
+        return FALSE;
+    }
+    info.Name[cch] = 0;
+    if (_wcsnicmp(info.Name, wszPrefix, ARRAYSIZE(wszPrefix) - 1) != 0)
+    {
+        return FALSE;
+    }
+    const WCHAR* pSid = info.Name + ARRAYSIZE(wszPrefix) - 1;
+    const WCHAR* pMiddle = wcschr(pSid, L'\\');
+    if (!pMiddle || _wcsnicmp(pMiddle, wszMiddle, ARRAYSIZE(wszMiddle) - 1) != 0)
+    {
+        return FALSE;
+    }
+    const WCHAR* pEntry = pMiddle + ARRAYSIZE(wszMiddle) - 1;
+    return pEntry[0] && !wcschr(pEntry, L'\\');
+}
+
+static LSTATUS WINAPI ET_RegGetValueWHook(HKEY hkey, LPCWSTR lpSubKey, LPCWSTR lpValue, DWORD dwFlags, LPDWORD pdwType, PVOID pvData, LPDWORD pcbData)
+{
+    if (bEssentialShowAllTrayIcons && !lpSubKey && lpValue && (dwFlags & RRF_RT_REG_DWORD) && pvData && pcbData &&
+        *pcbData >= sizeof(DWORD) && !_wcsicmp(lpValue, L"IsPromoted") && ET_IsNotifyIconSettingsKey(hkey))
+    {
+        if (pdwType)
+        {
+            *pdwType = REG_DWORD;
+        }
+        *(DWORD*)pvData = 1;
+        *pcbData = sizeof(DWORD);
+        return ERROR_SUCCESS;
+    }
+    return ET_RegGetValueWFunc(hkey, lpSubKey, lpValue, dwFlags, pdwType, pvData, pcbData);
+}
+
+static LSTATUS WINAPI ET_RegSetValueExWHook(HKEY hKey, LPCWSTR lpValueName, DWORD Reserved, DWORD dwType, const BYTE* lpData, DWORD cbData)
+{
+    if (bEssentialShowAllTrayIcons && lpValueName && !_wcsicmp(lpValueName, L"IsPromoted") && ET_IsNotifyIconSettingsKey(hKey))
+    {
+        return ERROR_SUCCESS;
+    }
+    return ET_RegSetValueExWFunc(hKey, lpValueName, Reserved, dwType, lpData, cbData);
+}
+
+// Explorer watches every NotifyIconSettings subkey; writing and removing a temporary value makes it read the
+// (hooked) IsPromoted values again.
+static void ET_TouchAllNotifyIconSettings(void)
+{
+    static const WCHAR wszTempValue[] = L"_temp_ExplorerPatcher_EssentialShowAllTrayIcons";
+    HKEY hKey = NULL;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\NotifyIconSettings", 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+    {
+        return;
+    }
+    for (DWORD dwIndex = 0; dwIndex < 4096; ++dwIndex)
+    {
+        WCHAR wszSubKey[128];
+        DWORD cchSubKey = ARRAYSIZE(wszSubKey);
+        LSTATUS lStatus = RegEnumKeyExW(hKey, dwIndex, wszSubKey, &cchSubKey, NULL, NULL, NULL, NULL);
+        if (lStatus == ERROR_MORE_DATA)
+        {
+            continue;
+        }
+        if (lStatus != ERROR_SUCCESS)
+        {
+            break;
+        }
+        HKEY hSubKey = NULL;
+        if (RegOpenKeyExW(hKey, wszSubKey, 0, KEY_SET_VALUE, &hSubKey) == ERROR_SUCCESS)
+        {
+            if (RegSetValueExW(hSubKey, wszTempValue, 0, REG_SZ, (const BYTE*)L"", sizeof(WCHAR)) == ERROR_SUCCESS)
+            {
+                RegDeleteValueW(hSubKey, wszTempValue);
+            }
+            RegCloseKey(hSubKey);
+        }
+    }
+    RegCloseKey(hKey);
+}
+#pragma endregion
+
+#pragma region "Remove the startup apps delay"
+// Registry based variant of "Startup App Delay Fix": Explorer reads these two values before it launches the
+// startup applications. Values that already exist are left alone, and only the ones created here are removed again.
+#define ET_SERIALIZE_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Serialize"
+#define ET_STARTUP_DELAY_STATE_VALUE L"EssentialNoStartupDelayApplied"
+
+static void ET_ApplyStartupDelay(HKEY hKey)
+{
+    static const WCHAR* const wszValues[] = { L"StartupDelayInMSec", L"WaitforIdleState" };
+    // Bit 0: the option was processed as "on"; bits 8..: values created by this module.
+    DWORD dwState = ET_ReadDword(hKey, ET_STARTUP_DELAY_STATE_VALUE, 0);
+    BOOL bProcessedOn = (dwState & 1) != 0;
+    if ((bEssentialNoStartupDelay != FALSE) == bProcessedOn)
+    {
+        return;
+    }
+    DWORD dwOwned = (dwState >> 8) & 0x3;
+    for (UINT i = 0; i < ARRAYSIZE(wszValues); ++i)
+    {
+        if (bEssentialNoStartupDelay)
+        {
+            DWORD dwSize = 0;
+            if (RegGetValueW(HKEY_CURRENT_USER, ET_SERIALIZE_KEY, wszValues[i], RRF_RT_ANY, NULL, NULL, &dwSize) == ERROR_SUCCESS)
+            {
+                continue;
+            }
+            DWORD dwZero = 0;
+            if (RegSetKeyValueW(HKEY_CURRENT_USER, ET_SERIALIZE_KEY, wszValues[i], REG_DWORD, &dwZero, sizeof(DWORD)) == ERROR_SUCCESS)
+            {
+                dwOwned |= (1u << i);
+            }
+        }
+        else if (dwOwned & (1u << i))
+        {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, ET_SERIALIZE_KEY, wszValues[i]);
+            dwOwned &= ~(1u << i);
+        }
+    }
+    dwState = (bEssentialNoStartupDelay ? 1 : 0) | (dwOwned << 8);
+    RegSetValueExW(hKey, ET_STARTUP_DELAY_STATE_VALUE, 0, REG_DWORD, (const BYTE*)&dwState, sizeof(DWORD));
+}
+#pragma endregion
+
+#pragma region "Block F1 help"
+// Port of "F1 Blocker" for File Explorer: a plain F1 key press is swallowed before the accelerator table turns it
+// into the "get help" command (which opens a web browser).
+typedef int(WINAPI* ET_TranslateAcceleratorW_t)(HWND hWnd, HACCEL hAccTable, LPMSG lpMsg);
+static ET_TranslateAcceleratorW_t ET_TranslateAcceleratorWFunc = NULL;
+
+static int WINAPI ET_TranslateAcceleratorWHook(HWND hWnd, HACCEL hAccTable, LPMSG lpMsg)
+{
+    if (bEssentialBlockF1Help && lpMsg && lpMsg->message == WM_KEYDOWN && lpMsg->wParam == VK_F1 &&
+        !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_SHIFT) & 0x8000) && !(GetKeyState(VK_MENU) & 0x8000))
+    {
+        return TRUE;
+    }
+    return ET_TranslateAcceleratorWFunc(hWnd, hAccTable, lpMsg);
+}
+#pragma endregion
+
+#pragma region "Hooks installed on demand"
+// These hooks sit on very hot functions, so each group is only installed the first time its option is on
+// (SlimDetours hooks take effect immediately). They stay installed afterwards and check the option themselves.
+#if WITH_MAIN_PATCHER
+static BOOL g_bEssentialHooksReady = FALSE;
+static SRWLOCK g_essentialHooksLock = SRWLOCK_INIT;
+
+static void ET_InstallHook(HMODULE hModule, LPCSTR pszName, void** ppFunc, void* pHook)
+{
+    if (*ppFunc || !hModule)
+    {
+        return;
+    }
+    *ppFunc = (void*)GetProcAddress(hModule, pszName);
+    if (*ppFunc && funchook_prepare(funchook, ppFunc, pHook) != 0)
+    {
+        *ppFunc = NULL;
+    }
+}
+#endif
+
+static void ET_UpdateOnDemandHooks(void)
+{
+#if WITH_MAIN_PATCHER
+    static BOOL bLastShowAllTrayIcons = FALSE;
+    BOOL bTouchTrayIcons = FALSE;
+
+    AcquireSRWLockExclusive(&g_essentialHooksLock);
+    if (g_bEssentialHooksReady)
+    {
+        if (bEssentialBlockF1Help)
+        {
+            ET_InstallHook(GetModuleHandleW(L"user32.dll"), "TranslateAcceleratorW", (void**)&ET_TranslateAcceleratorWFunc, ET_TranslateAcceleratorWHook);
+        }
+        if (bEssentialHideDesktopIconText)
+        {
+            ET_InstallHook(GetModuleHandleW(L"user32.dll"), "DrawTextW", (void**)&ET_DrawTextWFunc, ET_DrawTextWHook);
+            ET_InstallHook(LoadLibraryExW(L"uxtheme.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32), "DrawThemeTextEx", (void**)&ET_DrawThemeTextExFunc, ET_DrawThemeTextExHook);
+        }
+        if (bEssentialFixExplorerWhiteFlash)
+        {
+            if (!ET_ShouldAppsUseDarkModeFunc)
+            {
+                HMODULE hUxtheme = LoadLibraryExW(L"uxtheme.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+                ET_ShouldAppsUseDarkModeFunc = hUxtheme ? (ET_ShouldAppsUseDarkMode_t)GetProcAddress(hUxtheme, MAKEINTRESOURCEA(132)) : NULL;
+            }
+            if (ET_ShouldAppsUseDarkModeFunc)
+            {
+                ET_InstallHook(GetModuleHandleW(L"user32.dll"), "FillRect", (void**)&ET_FillRectFunc, ET_FillRectHook);
+                ET_InstallHook(GetModuleHandleW(L"gdi32.dll"), "BitBlt", (void**)&ET_BitBltFunc, ET_BitBltHook);
+            }
+        }
+        if (bEssentialShowAllTrayIcons && IsWindows11Version22H2OrHigher())
+        {
+            if (!ET_NtQueryKeyFunc)
+            {
+                ET_NtQueryKeyFunc = (ET_NtQueryKey_t)GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryKey");
+            }
+            if (ET_NtQueryKeyFunc)
+            {
+                ET_InstallHook(GetModuleHandleW(L"kernelbase.dll"), "RegGetValueW", (void**)&ET_RegGetValueWFunc, ET_RegGetValueWHook);
+                ET_InstallHook(GetModuleHandleW(L"kernelbase.dll"), "RegSetValueExW", (void**)&ET_RegSetValueExWFunc, ET_RegSetValueExWHook);
+            }
+        }
+        if (ET_RegGetValueWFunc && bLastShowAllTrayIcons != (bEssentialShowAllTrayIcons != FALSE))
+        {
+            bLastShowAllTrayIcons = (bEssentialShowAllTrayIcons != FALSE);
+            bTouchTrayIcons = TRUE;
+        }
+    }
+    ReleaseSRWLockExclusive(&g_essentialHooksLock);
+
+    if (bTouchTrayIcons)
+    {
+        ET_TouchAllNotifyIconSettings();
+    }
+#endif
+}
+#pragma endregion
+
 void EssentialTweaks_PrepareHooks(void)
 {
 #if WITH_MAIN_PATCHER
@@ -1561,6 +2622,11 @@ void EssentialTweaks_PrepareHooks(void)
     // The hook is always installed; the setting is evaluated when the message box is about to be shown,
     // so that the option takes effect without restarting File Explorer.
     ET_PrepareShellMessageBoxHooks();
+
+    AcquireSRWLockExclusive(&g_essentialHooksLock);
+    g_bEssentialHooksReady = TRUE;
+    ReleaseSRWLockExclusive(&g_essentialHooksLock);
+    ET_UpdateOnDemandHooks();
 #endif
 }
 

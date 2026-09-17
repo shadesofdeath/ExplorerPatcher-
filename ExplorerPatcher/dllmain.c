@@ -7279,9 +7279,9 @@ HWND CreateWindowExWHook(
         hInstance,
         lpParam
     );
-    if (bIsExplorerProcess && hWnd && hWndParent)
+    if (bIsExplorerProcess && hWnd)
     {
-        // ExplorerPatcher++: subclass File Explorer item views (double click empty space to go up)
+        // ExplorerPatcher++: File Explorer item views, the desktop view and new File Explorer windows
         EssentialTweaks_OnWindowCreated(hWnd, hWndParent);
     }
 #if WITH_MAIN_PATCHER

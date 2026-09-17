@@ -11,6 +11,13 @@
 //   * file-explorer-reopen-closed-tab   (Armaninyow)  - Ctrl+Shift+T reopens the last closed File Explorer tab
 //   * taskbar-empty-space-clicks        (m1lhaus)     - double / middle click on empty taskbar space runs an action
 //   * hide-home-gallery-explorer        (registry based variant) - hide Home / Gallery / OneDrive in the navigation pane
+//   * explorer-single-window-tabs       (ALMAS CP)    - new File Explorer windows open as tabs of an existing window
+//   * zen-desktop-toggle-icons          (Lanbo, manual toggle only) - double click the desktop to hide / show the icons
+//   * hide-desktop-icon-text            (kivsak)      - hide desktop icon labels and shortcut arrows
+//   * fix-explorer-white-flash          (Mgg Sk)      - no white flash when File Explorer views open in dark mode
+//   * taskbar-notification-icons-show-all (m417z)     - always show all tray icons on the Windows 11 taskbar
+//   * startup-app-delay-fix             (meteoni, registry based variant) - no delay before startup apps are launched
+//   * f1-blocker                        (d0gkiller87) - F1 does not open the help web page in File Explorer
 //
 // All tweaks are disabled by default and are configured from the "Essential Tweaks" page of the Properties window.
 //
@@ -38,6 +45,15 @@ extern DWORD dwEssentialTaskbarMiddleClickAction;
 extern DWORD bEssentialHideExplorerHome;
 extern DWORD bEssentialHideExplorerGallery;
 extern DWORD bEssentialHideExplorerOneDrive;
+// New File Explorer windows open as tabs of an existing window (Windows 11 22H2+; hold Shift to bypass)
+extern DWORD bEssentialSingleWindowTabs;
+extern DWORD bEssentialDesktopToggleIcons;
+extern DWORD bEssentialHideDesktopIconText;
+extern DWORD bEssentialHideShortcutArrows;
+extern DWORD bEssentialFixExplorerWhiteFlash;
+extern DWORD bEssentialShowAllTrayIcons;
+extern DWORD bEssentialNoStartupDelay;
+extern DWORD bEssentialBlockF1Help;
 
 // Reads the tweak values from the ExplorerPatcher registry key (called from LoadSettings).
 void EssentialTweaks_LoadSettings(HKEY hKey);
@@ -71,7 +87,7 @@ BOOL EssentialTweaks_OnTaskbarTimer(HWND hTaskbar, WPARAM idTimer);
 // in one translation unit): returns the UI Automation class name of the element at the given screen point.
 BOOL EssentialTweaks_GetUIAutomationClassNameAtPoint(POINT pt, WCHAR* wszClass, size_t cch);
 
-// Called from the CreateWindowExW hook after a window was created.
+// Called from the CreateWindowExW hook after a window was created (hWndParent is NULL for top-level windows).
 void EssentialTweaks_OnWindowCreated(HWND hWnd, HWND hWndParent);
 
 #ifdef __cplusplus

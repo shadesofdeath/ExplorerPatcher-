@@ -17,8 +17,16 @@ The tweaks are C ports of the following [Windhawk mods](https://github.com/ramen
 | Ctrl+Shift+T reopens the last closed File Explorer tab (Windows 11 22H2 or newer) | [File Explorer Reopen Closed Tab](https://windhawk.net/mods/file-explorer-reopen-closed-tab) | Armaninyow |
 | Run an action (show desktop, Task Manager, Start menu, mute, media play/pause, toggle taskbar auto-hide, Task View, lock) on a double click or middle click on empty taskbar space | [Click on empty taskbar space](https://windhawk.net/mods/taskbar-empty-space-clicks) (simplified) | m1lhaus |
 | Hide Home, Gallery and OneDrive in the File Explorer navigation pane (registry based; entries that were already hidden by other means are left alone) | [Hide Home, Gallery & OneDrive in Explorer](https://windhawk.net/mods/hide-home-gallery-explorer) (idea) | rinosaur681 |
+| Open new File Explorer windows as tabs of the existing window (Windows 11 22H2 or newer; hold Shift to bypass) | [Explorer Single Window Tabs](https://windhawk.net/mods/explorer-single-window-tabs) | ALMAS CP |
+| Fix the white flash when a folder opens in dark mode | [Fix white flashes in explorer](https://windhawk.net/mods/fix-explorer-white-flash) | Mgg Sk |
+| F1 does not open the help web page in File Explorer | [F1 Blocker](https://windhawk.net/mods/f1-blocker) | d0gkiller87 |
+| Always show all icons in the notification area of the Windows 11 taskbar | [Always show all taskbar tray icons](https://windhawk.net/mods/taskbar-notification-icons-show-all) | m417z |
+| Double click an empty area of the desktop to hide or show the icons | [ZenDesktop: Desktop Icon Toggle](https://windhawk.net/mods/zen-desktop-toggle-icons) (manual toggle only) | Lanbo |
+| Hide the labels of desktop icons, hide the shortcut arrows on icons | [Hide Desktop Icon Text and Shortcut Arrows](https://windhawk.net/mods/hide-desktop-icon-text) | kivsak |
+| Do not delay startup apps after sign-in (registry based; existing values are left alone) | [Startup App Delay Fix](https://windhawk.net/mods/startup-app-delay-fix) (idea) | meteoni |
 
-All settings on the page are included in the "Export current settings" / "Import settings" feature. ExplorerPatcher++
+The page scrolls (mouse wheel, Page Up / Page Down, Home / End, and keyboard focus is kept in view). All settings on
+the page are included in the "Export current settings" / "Import settings" feature. ExplorerPatcher++
 is built for x64 only; the ARM64 build was removed from the build pipeline.
 
 The implementation lives in [`ExplorerPatcher/EssentialTweaks.c`](ExplorerPatcher/EssentialTweaks.c). Settings are

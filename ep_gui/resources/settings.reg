@@ -763,9 +763,6 @@
 
 
 ;T %R:2401%
-;e %R:2402%
-;y %R:2416% 🡕
-;https://github.com/ramensoftware/windhawk-mods
 ;a %R:2417%
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;c 3 %R:2403%
@@ -812,6 +809,11 @@
 ;x 7 %R:2428%
 ;x 8 %R:2429%
 "EssentialTaskbarMiddleClickAction"=dword:00000000
+;s Essential_TraySection IsWindows11Version22H2OrHigher
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2438%
+"EssentialShowAllTrayIcons"=dword:00000000
+;g Essential_TraySection
 ;a %R:2418%
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2413%
@@ -822,6 +824,11 @@
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2415% *
 "EssentialReopenClosedTab"=dword:00000000
+;s Essential_TabsSection IsWindows11Version22H2OrHigher
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2433%
+"EssentialSingleWindowTabs"=dword:00000000
+;g Essential_TabsSection
 ;s Essential_HomeGallerySection IsWindows11Version22H2OrHigher
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2430%
@@ -833,6 +840,26 @@
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2432%
 "EssentialHideExplorerOneDrive"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2437%
+"EssentialFixExplorerWhiteFlash"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2440%
+"EssentialBlockF1Help"=dword:00000000
+;a %R:2441%
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2434%
+"EssentialDesktopToggleIcons"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2435%
+"EssentialHideDesktopIconText"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2436% *
+"EssentialHideShortcutArrows"=dword:00000000
+;a %R:2442%
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2439%
+"EssentialNoStartupDelay"=dword:00000000
 
 
 ;T %R:2301%
