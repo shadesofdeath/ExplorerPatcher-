@@ -51,6 +51,9 @@
     <ClInclude Include="HideExplorerSearchBar.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="EssentialTweaks.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="StartMenu.h">
       <Filter>Header Files</Filter>
     </ClInclude>
@@ -173,6 +176,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="HideExplorerSearchBar.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="EssentialTweaks.c">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="StartMenu.c">

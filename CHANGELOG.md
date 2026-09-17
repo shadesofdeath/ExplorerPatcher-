@@ -1,5 +1,17 @@
 # Explorer Patcher Change log
 
+## ExplorerPatcher++ (fork)
+
+* Added the "Essential Tweaks" page to the Properties window, with tweaks ported from Windhawk mods:
+  * Change the system volume by scrolling over the taskbar (entire taskbar or notification area only, configurable step).
+  * Fix disappearing tray icons by re-broadcasting `TaskbarCreated` after the taskbar starts.
+  * Do not ask for confirmation when changing a file name extension.
+  * Double click an empty area in File Explorer to go up one folder.
+  * Ctrl+Shift+T reopens the last closed File Explorer tab (Windows 11 22H2 or newer).
+* All new tweaks are off by default; the original ExplorerPatcher pages are unchanged.
+* Update checks now point to the ExplorerPatcher++ repository.
+
+
 This document includes the same release notes as in the [Releases](https://github.com/valinet/ExplorerPatcher/releases) section on GitHub.
 
 ## 26100.8457.70

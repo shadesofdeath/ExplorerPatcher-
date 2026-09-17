@@ -427,6 +427,25 @@ BEGIN
 
     IDS_MAINTENANCE             "Settings and uninstall"
 
+    IDS_ESSENTIAL               "Essential Tweaks"
+    IDS_ESSENTIAL_DESCRIPTION   "Extra tweaks ported from Windhawk mods. Everything on this page is turned off by default."
+    IDS_ESSENTIAL_TASKBAR       "Taskbar"
+    IDS_ESSENTIAL_VOLSCROLL     "Change the system volume by scrolling over the taskbar"
+    IDS_ESSENTIAL_VOLSCROLL_0   "Off"
+    IDS_ESSENTIAL_VOLSCROLL_1   "Entire taskbar"
+    IDS_ESSENTIAL_VOLSCROLL_2   "Notification area only"
+    IDS_ESSENTIAL_VOLSTEP       "Volume change per mouse wheel notch (percent)"
+    IDS_ESSENTIAL_TRAYFIX       "Fix disappearing tray icons (re-broadcast TaskbarCreated after the taskbar starts)"
+    IDS_ESSENTIAL_TRAYFIX_0     "Off"
+    IDS_ESSENTIAL_TRAYFIX_5     "5 seconds after the taskbar starts"
+    IDS_ESSENTIAL_TRAYFIX_10    "10 seconds after the taskbar starts"
+    IDS_ESSENTIAL_TRAYFIX_20    "20 seconds after the taskbar starts"
+    IDS_ESSENTIAL_EXPLORER      "File Explorer"
+    IDS_ESSENTIAL_EXTWARN       "Do not ask for confirmation when changing a file name extension"
+    IDS_ESSENTIAL_DBLCLICKUP    "Double click an empty area to go up one folder"
+    IDS_ESSENTIAL_REOPENTAB     "Ctrl+Shift+T reopens the last closed tab"
+    IDS_ESSENTIAL_CREDITS       "Based on Windhawk mods by m417z, Alchemy, wrldspawn and Armaninyow. Learn more"
+
     IDS_UNINSTALL               "Uninstall"
     IDS_UNINSTALL_UNINSTALL     "Uninstall ExplorerPatcher"
 

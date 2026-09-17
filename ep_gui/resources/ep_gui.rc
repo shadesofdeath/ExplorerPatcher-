@@ -1,4 +1,4 @@
-// Microsoft Visual C++ generated resource script.
+﻿// Microsoft Visual C++ generated resource script.
 //
 #include "resource.h"
 
@@ -101,7 +101,7 @@ IDR_REGISTRY2           RCDATA                  "resources\settings10.reg"
 
 STRINGTABLE
 BEGIN
-    IDS_PRODUCTNAME         "ExplorerPatcher"
+    IDS_PRODUCTNAME         "ExplorerPatcher++"
 END
 
 #endif    // English (United States) resources

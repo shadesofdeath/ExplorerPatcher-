@@ -206,6 +206,7 @@ BOOL g_bIsDesktopRaised = FALSE;
 #endif
 #include "SettingsMonitor.h"
 #include "HideExplorerSearchBar.h"
+#include "EssentialTweaks.h"
 #include "ImmersiveFlyouts.h"
 #include "updates.h"
 DWORD dwUpdatePolicy = UPDATE_POLICY_DEFAULT;
@@ -1952,6 +1953,15 @@ INT64 Shell_TrayWndSubclassProc(
                 UnhookWindowsHookEx(Shell_TrayWndMouseHook);
             }
             RemoveWindowSubclass(hWnd, Shell_TrayWndSubclassProc, Shell_TrayWndSubclassProc);
+            break;
+        }
+        case WM_MOUSEWHEEL:
+        {
+            // ExplorerPatcher++: change the system volume by scrolling over the taskbar
+            if (EssentialTweaks_OnTaskbarMouseWheel(hWnd, wParam, lParam))
+            {
+                return 0;
+            }
             break;
         }
         case WM_NCLBUTTONDOWN:
@@ -5827,6 +5837,7 @@ void WINAPI LoadSettings(LPARAM lParam)
             &bHideExplorerSearchBar,
             &dwSize
         );
+        EssentialTweaks_LoadSettings(hKey);
         dwSize = sizeof(DWORD);
         RegQueryValueExW(
             hKey,
@@ -7196,6 +7207,11 @@ HWND CreateWindowExWHook(
         hInstance,
         lpParam
     );
+    if (bIsExplorerProcess && hWnd && hWndParent)
+    {
+        // ExplorerPatcher++: subclass File Explorer item views (double click empty space to go up)
+        EssentialTweaks_OnWindowCreated(hWnd, hWndParent);
+    }
 #if WITH_MAIN_PATCHER
     if (bIsExplorerProcess && (*((WORD*)&(lpClassName)+1)) && (!wcscmp(lpClassName, L"TrayClockWClass") || !wcscmp(lpClassName, L"ClockButton")))
     {
@@ -10807,6 +10823,14 @@ DWORD Inject(BOOL bIsExplorer)
     //    hDelayedInjectionThread = CreateThread(0, 0, InjectBasicFunctions, 0, 0, 0);
     //}
 
+#if WITH_MAIN_PATCHER
+    if (bIsExplorerProcess)
+    {
+        // ExplorerPatcher++: hooks that apply to every explorer.exe process (file extension change warning)
+        EssentialTweaks_PrepareHooks();
+    }
+#endif
+
     if (!bIsExplorer)
     {
 #if WITH_MAIN_PATCHER
@@ -11398,6 +11422,9 @@ DWORD Inject(BOOL bIsExplorer)
     // funchook_destroy(funchook);
     // funchook = NULL;
     printf("Installed hooks.\n");
+
+    // ExplorerPatcher++: background workers (tray icon fix, reopen closed tab)
+    EssentialTweaks_Start();
 
 
 

@@ -1,3 +1,28 @@
+# ExplorerPatcher++
+
+ExplorerPatcher++ is a fork of [ExplorerPatcher](https://github.com/valinet/ExplorerPatcher) that adds an extra
+**"Essential Tweaks"** page to the Properties window. The original pages and options are left untouched; every new
+tweak lives on the new page and is turned off by default.
+
+## Essential Tweaks
+
+The tweaks are C ports of the following [Windhawk mods](https://github.com/ramensoftware/windhawk-mods):
+
+| Tweak | Based on | Author |
+|-------|----------|--------|
+| Change the system volume by scrolling over the taskbar (entire taskbar or notification area only, configurable step) | [Taskbar Volume Control](https://windhawk.net/mods/taskbar-volume-control) | m417z |
+| Fix disappearing tray icons by re-broadcasting `TaskbarCreated` a few seconds after the taskbar starts | [Disappearing Tray Icons Fix](https://windhawk.net/mods/taskbar-disappearing-tray-icons-fix) | Alchemy |
+| Do not ask for confirmation when changing a file name extension | [Turn off change file extension warning](https://windhawk.net/mods/extension-change-no-warning) | m417z |
+| Double click an empty area in File Explorer to go up one folder | [Explorer Double Click Up](https://windhawk.net/mods/explorer-double-click-up) | wrldspawn |
+| Ctrl+Shift+T reopens the last closed File Explorer tab (Windows 11 22H2 or newer) | [File Explorer Reopen Closed Tab](https://windhawk.net/mods/file-explorer-reopen-closed-tab) | Armaninyow |
+
+The implementation lives in [`ExplorerPatcher/EssentialTweaks.c`](ExplorerPatcher/EssentialTweaks.c). Settings are
+stored as `Essential*` values under `HKCU\Software\ExplorerPatcher`, next to the regular ExplorerPatcher settings.
+
+Everything below this line is the original ExplorerPatcher documentation; it applies to ExplorerPatcher++ as well.
+
+---
+
 # ExplorerPatcher
 
 This project aims to enhance the working environment on Windows.

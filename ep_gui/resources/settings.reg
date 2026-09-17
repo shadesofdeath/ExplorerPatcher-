@@ -762,6 +762,44 @@
 "XamlSounds"=dword:00000000
 
 
+;T %R:2401%
+;e %R:2402%
+;y %R:2416% 🡕
+;https://github.com/ramensoftware/windhawk-mods
+;a %R:2417%
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;c 3 %R:2403%
+;x 0 %R:2404%
+;x 1 %R:2405%
+;x 2 %R:2406%
+"EssentialTaskbarVolumeScroll"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;c 5 %R:2407%
+;x 2 2
+;x 4 4
+;x 6 6
+;x 10 10
+;x 20 20
+"EssentialVolumeStep"=dword:00000002
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;c 4 %R:2408% *
+;x 0 %R:2409%
+;x 5 %R:2410%
+;x 10 %R:2411%
+;x 20 %R:2412%
+"EssentialTrayIconFix"=dword:00000000
+;a %R:2418%
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2413%
+"EssentialDisableExtensionWarning"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2414%
+"EssentialExplorerDoubleClickUp"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2415% *
+"EssentialReopenClosedTab"=dword:00000000
+
+
 ;T %R:2301%
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;z 10001 %R:1533%
