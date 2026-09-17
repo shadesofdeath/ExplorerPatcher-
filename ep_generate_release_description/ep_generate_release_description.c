@@ -60,11 +60,11 @@ int main(int argc, char** argv)
         }
         free(line);
         printf(
-            "Please consult the [README](https://github.com/shadesofdeath/ExplorerPatcher-/blob/master/README.md) for more details.\n"
-            "A detailed change log is available [here](https://github.com/shadesofdeath/ExplorerPatcher-/blob/master/CHANGELOG.md).\n"
+            "Please consult the [README](https://github.com/shadesofdeath/ExplorerPatcherPlusPlus/blob/master/README.md) for more details.\n"
+            "A detailed change log is available [here](https://github.com/shadesofdeath/ExplorerPatcherPlusPlus/blob/master/CHANGELOG.md).\n"
             "An archive containing all the files generated during the build process (including `dxgi.dll` and symbol files) is available [here](%s).\n\n"
-            "*This release has been published automatically from %s %s in %s [%s](https://github.com/shadesofdeath/ExplorerPatcher-/tree/%s/).*",
-            argc == 5 ? argv[4] : "https://github.com/shadesofdeath/ExplorerPatcher-/actions",
+            "*This release has been published automatically from %s %s in %s [%s](https://github.com/shadesofdeath/ExplorerPatcherPlusPlus/tree/%s/).*",
+            argc == 5 ? argv[4] : "https://github.com/shadesofdeath/ExplorerPatcherPlusPlus/actions",
             argc == 5 ? "commits up to and including" : "the latest commits",
             argc == 5 ? argv[1] : "",
             argc == 5 ? argv[2] : "branch",

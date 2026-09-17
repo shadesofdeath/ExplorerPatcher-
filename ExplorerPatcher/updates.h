@@ -32,9 +32,9 @@ extern HMODULE hModule;
 #define UPDATES_BUFSIZ 10240
 #define UPDATES_DEFAULT_TIMEOUT 600
 
-#define UPDATES_RELEASE_INFO_URL          "https://github.com/shadesofdeath/ExplorerPatcher-"
-#define UPDATES_RELEASE_INFO_URL_STABLE   "https://github.com/shadesofdeath/ExplorerPatcher-/releases/latest"
-#define UPDATES_RELEASE_INFO_URL_STAGING  "https://api.github.com/repos/shadesofdeath/ExplorerPatcher-/releases?per_page=1"
+#define UPDATES_RELEASE_INFO_URL          "https://github.com/shadesofdeath/ExplorerPatcherPlusPlus"
+#define UPDATES_RELEASE_INFO_URL_STABLE   "https://github.com/shadesofdeath/ExplorerPatcherPlusPlus/releases/latest"
+#define UPDATES_RELEASE_INFO_URL_STAGING  "https://api.github.com/repos/shadesofdeath/ExplorerPatcherPlusPlus/releases?per_page=1"
 
 DWORD CheckForUpdatesThread(LPVOID params);
 
