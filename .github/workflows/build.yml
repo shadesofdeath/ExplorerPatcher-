@@ -198,10 +198,10 @@ jobs:
           "Session: $((Get-Process -Id $PID).SessionId)"
           Get-Process explorer -ErrorAction SilentlyContinue | Select-Object Id, SessionId | Out-String
 
-          # Pre-seed settings: open Properties on the Essential Tweaks page (11th page) with the new tweaks enabled
+          # Pre-seed settings: open Properties on the Essential Tweaks page (10th page) with the new tweaks enabled
           New-Item -Path 'HKCU:\Software\ExplorerPatcher' -Force | Out-Null
           $reg = 'HKCU:\Software\ExplorerPatcher'
-          Set-ItemProperty -Path $reg -Name 'LastSectionInProperties' -Value 11 -Type DWord
+          Set-ItemProperty -Path $reg -Name 'LastSectionInProperties' -Value 10 -Type DWord
           Set-ItemProperty -Path $reg -Name 'EssentialTaskbarVolumeScroll' -Value 1 -Type DWord
           Set-ItemProperty -Path $reg -Name 'EssentialVolumeStep' -Value 4 -Type DWord
           Set-ItemProperty -Path $reg -Name 'EssentialTrayIconFix' -Value 5 -Type DWord
