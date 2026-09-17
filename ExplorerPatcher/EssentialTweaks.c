@@ -1,5 +1,7 @@
 #include "EssentialTweaks.h"
+#if WITH_MAIN_PATCHER
 #include "hooking.h"
+#endif
 #include <initguid.h>
 #include <Windows.h>
 #include <windowsx.h>
@@ -363,6 +365,7 @@ static int __cdecl ET_shlwapi_ShellMessageBoxInternalHook(
     return ET_shlwapi_ShellMessageBoxInternalFunc(hAppInst, hWnd, dwFlags, lpcText, lpcTitle, fuStyle, a7, a8, a9, a10, a11, a12, a13, a14, a15, a16);
 }
 
+#if WITH_MAIN_PATCHER
 static void ET_PrepareShellMessageBoxHooks(void)
 {
     HMODULE hShlwapi = LoadLibraryExW(L"shlwapi.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -408,6 +411,7 @@ static void ET_PrepareShellMessageBoxHooks(void)
         }
     }
 }
+#endif
 #pragma endregion
 
 #pragma region "Shell windows helpers"
@@ -1039,6 +1043,7 @@ static void ET_StartReopenClosedTab(void)
 
 void EssentialTweaks_PrepareHooks(void)
 {
+#if WITH_MAIN_PATCHER
     if (!funchook)
     {
         return;
@@ -1046,6 +1051,7 @@ void EssentialTweaks_PrepareHooks(void)
     // The hook is always installed; the setting is evaluated when the message box is about to be shown,
     // so that the option takes effect without restarting File Explorer.
     ET_PrepareShellMessageBoxHooks();
+#endif
 }
 
 void EssentialTweaks_Start(void)
