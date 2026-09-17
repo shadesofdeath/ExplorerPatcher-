@@ -15,6 +15,9 @@
   * Always show all icons in the notification area of the Windows 11 taskbar.
   * Desktop: double click to hide / show the icons, hide icon labels, hide shortcut arrows.
   * Do not delay startup apps after sign-in.
+  * Ctrl + scroll over the taskbar switches the audio output device.
+  * No content previews on folder icons; no Microsoft Store item in "Open with"; preload context menu handlers.
+  * Open new windows centered; switch between light and dark mode at fixed hours.
 * The pages of the Properties window can now be scrolled (mouse wheel, Page Up / Page Down, Home / End); previously a page taller than the window was drawn over the footer.
 * The Essential Tweaks page is available in Turkish.
 * The taskbar tweaks now also work on the Windows 11 taskbar of recent builds, which receives its input as `WM_POINTER*` messages (the input window's procedure is hooked inline; it must not be subclassed).

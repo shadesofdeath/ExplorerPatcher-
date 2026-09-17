@@ -10,6 +10,8 @@
 #include <shlwapi.h>
 #include <shellapi.h>
 #include <uxtheme.h>
+#include <dwmapi.h>
+#include <intrin.h>
 #include <commoncontrols.h>
 #include <exdisp.h>
 #include <servprov.h>
@@ -22,6 +24,7 @@
 #include "osutility.h"
 
 #pragma comment(lib, "Comctl32.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 DWORD dwEssentialTaskbarVolumeScroll = 0;
 DWORD dwEssentialVolumeStep = 2;
@@ -42,6 +45,14 @@ DWORD bEssentialFixExplorerWhiteFlash = FALSE;
 DWORD bEssentialShowAllTrayIcons = FALSE;
 DWORD bEssentialNoStartupDelay = FALSE;
 DWORD bEssentialBlockF1Help = FALSE;
+DWORD bEssentialAudioDeviceScroll = FALSE;
+DWORD bEssentialRemoveStoreOpenWith = FALSE;
+DWORD bEssentialDisableFolderThumbnails = FALSE;
+DWORD bEssentialCenterNewWindows = FALSE;
+DWORD bEssentialAutoTheme = FALSE;
+DWORD dwEssentialAutoThemeLightHour = 7;
+DWORD dwEssentialAutoThemeDarkHour = 19;
+DWORD bEssentialPreloadContextMenu = FALSE;
 
 // GUIDs are defined locally so that the module does not depend on uuid.lib / the SDK's MIDL-generated definitions.
 static const GUID ET_CLSID_MMDeviceEnumerator = { 0xBCDE0395, 0xE52F, 0x467C, { 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E } };
@@ -97,6 +108,8 @@ static void ET_ApplyStartupDelay(HKEY hKey);
 static void ET_UpdateOnDemandHooks(void);
 static void ET_RefreshDesktop(BOOL bRepaint);
 static void ET_HideShortcutArrowsOnce(void);
+static void ET_UpdateShellWorkers(void);
+static BOOL ET_OnTaskbarCtrlWheel(int nDelta);
 static void ET_OnExplorerWindowCreated(HWND hWnd);
 static void ET_OnDesktopListViewCreated(HWND hListView, HWND hDefView);
 
@@ -156,6 +169,16 @@ void EssentialTweaks_LoadSettings(HKEY hKey)
     bEssentialShowAllTrayIcons = ET_ReadDword(hKey, L"EssentialShowAllTrayIcons", 0) ? TRUE : FALSE;
     bEssentialNoStartupDelay = ET_ReadDword(hKey, L"EssentialNoStartupDelay", 0) ? TRUE : FALSE;
     bEssentialBlockF1Help = ET_ReadDword(hKey, L"EssentialBlockF1Help", 0) ? TRUE : FALSE;
+    bEssentialAudioDeviceScroll = ET_ReadDword(hKey, L"EssentialAudioDeviceScroll", 0) ? TRUE : FALSE;
+    bEssentialRemoveStoreOpenWith = ET_ReadDword(hKey, L"EssentialRemoveStoreOpenWith", 0) ? TRUE : FALSE;
+    bEssentialDisableFolderThumbnails = ET_ReadDword(hKey, L"EssentialDisableFolderThumbnails", 0) ? TRUE : FALSE;
+    bEssentialCenterNewWindows = ET_ReadDword(hKey, L"EssentialCenterNewWindows", 0) ? TRUE : FALSE;
+    bEssentialPreloadContextMenu = ET_ReadDword(hKey, L"EssentialPreloadContextMenu", 0) ? TRUE : FALSE;
+    dwValue = ET_ReadDword(hKey, L"EssentialAutoThemeLightHour", 7);
+    dwEssentialAutoThemeLightHour = (dwValue < 24) ? dwValue : 7;
+    dwValue = ET_ReadDword(hKey, L"EssentialAutoThemeDarkHour", 19);
+    dwEssentialAutoThemeDarkHour = (dwValue < 24) ? dwValue : 19;
+    bEssentialAutoTheme = ET_ReadDword(hKey, L"EssentialAutoTheme", 0) ? TRUE : FALSE;
 
     ET_ApplyStartupDelay(hKey);
     ET_UpdateOnDemandHooks();
@@ -164,6 +187,7 @@ void EssentialTweaks_LoadSettings(HKEY hKey)
     {
         ET_HideShortcutArrowsOnce();
     }
+    ET_UpdateShellWorkers();
 }
 #pragma endregion
 
@@ -285,7 +309,7 @@ static void ET_AdjustVolumeByWheelDelta(int nDelta)
 BOOL EssentialTweaks_OnTaskbarMouseWheel(HWND hWnd, WPARAM wParam, LPARAM lParam)
 {
     DWORD dwMode = dwEssentialTaskbarVolumeScroll;
-    if (!dwMode || !hWnd)
+    if ((!dwMode && !bEssentialAudioDeviceScroll) || !hWnd)
     {
         return FALSE;
     }
@@ -300,6 +324,15 @@ BOOL EssentialTweaks_OnTaskbarMouseWheel(HWND hWnd, WPARAM wParam, LPARAM lParam
 
     RECT rc;
     if (!GetWindowRect(hWnd, &rc) || !PtInRect(&rc, pt))
+    {
+        return FALSE;
+    }
+    // Ctrl + wheel switches the audio output device.
+    if (ET_OnTaskbarCtrlWheel(GET_WHEEL_DELTA_WPARAM(wParam)))
+    {
+        return TRUE;
+    }
+    if (!dwMode)
     {
         return FALSE;
     }
@@ -606,7 +639,7 @@ static LRESULT CALLBACK ET_InputSiteWndProcHook(HWND hWnd, UINT uMsg, WPARAM wPa
 {
     if (uMsg == WM_POINTERWHEEL)
     {
-        if (dwEssentialTaskbarVolumeScroll)
+        if (dwEssentialTaskbarVolumeScroll || bEssentialAudioDeviceScroll)
         {
             // Same parameter layout as WM_MOUSEWHEEL: wheel delta in the high word, screen coordinates in lParam.
             HWND hTaskbar = GetAncestor(hWnd, GA_ROOT);
@@ -2532,6 +2565,771 @@ static int WINAPI ET_TranslateAcceleratorWHook(HWND hWnd, HACCEL hAccTable, LPMS
 }
 #pragma endregion
 
+#pragma region "Ctrl + scroll over the taskbar: switch the audio output device"
+// Port of "Audio Output Device Switcher". The default render endpoint is changed through the undocumented (but
+// long-lived) IPolicyConfig interface; a small popup above the taskbar names the new device.
+typedef struct ET_IPolicyConfig ET_IPolicyConfig;
+typedef struct ET_IPolicyConfigVtbl
+{
+    HRESULT(STDMETHODCALLTYPE* QueryInterface)(ET_IPolicyConfig* This, REFIID riid, void** ppvObject);
+    ULONG(STDMETHODCALLTYPE* AddRef)(ET_IPolicyConfig* This);
+    ULONG(STDMETHODCALLTYPE* Release)(ET_IPolicyConfig* This);
+    // GetMixFormat, GetDeviceFormat, ResetDeviceFormat, SetDeviceFormat, GetProcessingPeriod, SetProcessingPeriod,
+    // GetShareMode, SetShareMode, GetPropertyValue, SetPropertyValue
+    void* reserved[10];
+    HRESULT(STDMETHODCALLTYPE* SetDefaultEndpoint)(ET_IPolicyConfig* This, PCWSTR wszDeviceId, ERole eRole);
+    HRESULT(STDMETHODCALLTYPE* SetEndpointVisibility)(ET_IPolicyConfig* This, PCWSTR wszDeviceId, INT bVisible);
+} ET_IPolicyConfigVtbl;
+struct ET_IPolicyConfig
+{
+    const ET_IPolicyConfigVtbl* lpVtbl;
+};
+
+static const GUID ET_CLSID_PolicyConfigClient = { 0x870AF99C, 0x171D, 0x4F9E, { 0xAF, 0x0D, 0xE6, 0x3D, 0xF4, 0x0C, 0x2B, 0xC9 } };
+static const GUID ET_IID_IPolicyConfig = { 0xF8679F50, 0x850A, 0x41CF, { 0x9C, 0x72, 0x43, 0x0F, 0x29, 0x02, 0x90, 0xC8 } };
+static const PROPERTYKEY ET_PKEY_Device_FriendlyName = { { 0xA45C254E, 0xDF1C, 0x4EFD, { 0x80, 0x20, 0x67, 0xD1, 0x46, 0xA8, 0x50, 0xE0 } }, 14 };
+
+#define ET_POPUP_CLASS L"EPEssentialPopup"
+#define ET_POPUP_TIMER 1
+static HWND g_hEssentialPopup = NULL;
+static WCHAR g_wszEssentialPopupText[128];
+
+static LRESULT CALLBACK ET_PopupWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+    case WM_PAINT:
+    {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hWnd, &ps);
+        RECT rc;
+        GetClientRect(hWnd, &rc);
+        HBRUSH hBrush = CreateSolidBrush(RGB(44, 44, 44));
+        FillRect(hdc, &rc, hBrush);
+        DeleteObject(hBrush);
+        NONCLIENTMETRICSW ncm;
+        ZeroMemory(&ncm, sizeof(ncm));
+        ncm.cbSize = sizeof(ncm);
+        HFONT hFont = NULL;
+        if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0))
+        {
+            UINT dpi = GetDpiForWindow(hWnd);
+            ncm.lfMessageFont.lfHeight = -MulDiv(11, dpi ? dpi : 96, 72);
+            hFont = CreateFontIndirectW(&ncm.lfMessageFont);
+        }
+        HGDIOBJ hOldFont = hFont ? SelectObject(hdc, hFont) : NULL;
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, RGB(255, 255, 255));
+        DrawTextW(hdc, g_wszEssentialPopupText, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+        if (hFont)
+        {
+            SelectObject(hdc, hOldFont);
+            DeleteObject(hFont);
+        }
+        EndPaint(hWnd, &ps);
+        return 0;
+    }
+    case WM_TIMER:
+        if (wParam == ET_POPUP_TIMER)
+        {
+            DestroyWindow(hWnd);
+            return 0;
+        }
+        break;
+    case WM_NCDESTROY:
+        if (g_hEssentialPopup == hWnd)
+        {
+            g_hEssentialPopup = NULL;
+        }
+        break;
+    default:
+        break;
+    }
+    return DefWindowProcW(hWnd, uMsg, wParam, lParam);
+}
+
+// Shows a short message centered above (or below) the taskbar of the monitor the cursor is on. Taskbar thread only.
+static void ET_ShowPopup(const WCHAR* wszText)
+{
+    static ATOM atomClass = 0;
+    HINSTANCE hInstance = NULL;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)ET_PopupWndProc, &hInstance);
+    if (!hInstance)
+    {
+        return;
+    }
+    if (!atomClass)
+    {
+        WNDCLASSEXW wc;
+        ZeroMemory(&wc, sizeof(wc));
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ET_PopupWndProc;
+        wc.hInstance = hInstance;
+        wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+        wc.lpszClassName = ET_POPUP_CLASS;
+        atomClass = RegisterClassExW(&wc);
+        if (!atomClass)
+        {
+            return;
+        }
+    }
+    wcsncpy_s(g_wszEssentialPopupText, ARRAYSIZE(g_wszEssentialPopupText), wszText, _TRUNCATE);
+
+    POINT pt;
+    GetCursorPos(&pt);
+    HMONITOR hMonitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO mi;
+    ZeroMemory(&mi, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    if (!GetMonitorInfoW(hMonitor, &mi))
+    {
+        return;
+    }
+    UINT dpiX = 96, dpiY = 96;
+    HMODULE hShcore = GetModuleHandleW(L"shcore.dll");
+    typedef HRESULT(WINAPI* GetDpiForMonitor_t)(HMONITOR, int, UINT*, UINT*);
+    GetDpiForMonitor_t pfnGetDpiForMonitor = hShcore ? (GetDpiForMonitor_t)GetProcAddress(hShcore, "GetDpiForMonitor") : NULL;
+    if (pfnGetDpiForMonitor)
+    {
+        pfnGetDpiForMonitor(hMonitor, 0, &dpiX, &dpiY);
+    }
+    int cx = MulDiv(340, dpiX, 96), cy = MulDiv(44, dpiY, 96), nGap = MulDiv(12, dpiY, 96);
+    int x = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - cx) / 2;
+    // Next to the edge of the work area the cursor (i.e. the taskbar) is closest to.
+    int y = (pt.y - mi.rcMonitor.top < mi.rcMonitor.bottom - pt.y) ? (mi.rcWork.top + nGap) : (mi.rcWork.bottom - cy - nGap);
+
+    if (!g_hEssentialPopup)
+    {
+        g_hEssentialPopup = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, ET_POPUP_CLASS, NULL, WS_POPUP,
+            x, y, cx, cy, NULL, NULL, hInstance, NULL);
+        if (!g_hEssentialPopup)
+        {
+            return;
+        }
+        int nCornerPreference = 2; // DWMWCP_ROUND
+        HMODULE hDwmapi = LoadLibraryExW(L"dwmapi.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+        typedef HRESULT(WINAPI* DwmSetWindowAttribute_t)(HWND, DWORD, LPCVOID, DWORD);
+        DwmSetWindowAttribute_t pfnDwmSetWindowAttribute = hDwmapi ? (DwmSetWindowAttribute_t)GetProcAddress(hDwmapi, "DwmSetWindowAttribute") : NULL;
+        if (pfnDwmSetWindowAttribute)
+        {
+            pfnDwmSetWindowAttribute(g_hEssentialPopup, 33, &nCornerPreference, sizeof(nCornerPreference));
+        }
+    }
+    SetWindowPos(g_hEssentialPopup, HWND_TOPMOST, x, y, cx, cy, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(g_hEssentialPopup, NULL, TRUE);
+    SetTimer(g_hEssentialPopup, ET_POPUP_TIMER, 1500, NULL);
+}
+
+static void ET_GetDeviceFriendlyName(IMMDevice* pDevice, WCHAR* wszName, size_t cch)
+{
+    wszName[0] = 0;
+    IPropertyStore* pStore = NULL;
+    if (SUCCEEDED(pDevice->lpVtbl->OpenPropertyStore(pDevice, STGM_READ, &pStore)) && pStore)
+    {
+        PROPVARIANT value;
+        PropVariantInit(&value);
+        if (SUCCEEDED(pStore->lpVtbl->GetValue(pStore, &ET_PKEY_Device_FriendlyName, &value)))
+        {
+            if (value.vt == VT_LPWSTR && value.pwszVal)
+            {
+                wcsncpy_s(wszName, cch, value.pwszVal, _TRUNCATE);
+            }
+            PropVariantClear(&value);
+        }
+        pStore->lpVtbl->Release(pStore);
+    }
+}
+
+// nDirection: +1 next device, -1 previous device.
+static void ET_CycleAudioOutputDevice(int nDirection)
+{
+    IMMDeviceEnumerator* pEnumerator = NULL;
+    IMMDeviceCollection* pCollection = NULL;
+    IMMDevice* pDefault = NULL;
+    LPWSTR pwszDefaultId = NULL;
+    UINT cDevices = 0;
+
+    if (FAILED(CoCreateInstance(&ET_CLSID_MMDeviceEnumerator, NULL, CLSCTX_INPROC_SERVER, &ET_IID_IMMDeviceEnumerator, (LPVOID*)&pEnumerator)) || !pEnumerator)
+    {
+        return;
+    }
+    if (SUCCEEDED(pEnumerator->lpVtbl->GetDefaultAudioEndpoint(pEnumerator, eRender, eConsole, &pDefault)) && pDefault)
+    {
+        if (FAILED(pDefault->lpVtbl->GetId(pDefault, &pwszDefaultId)))
+        {
+            pwszDefaultId = NULL;
+        }
+        pDefault->lpVtbl->Release(pDefault);
+    }
+    if (SUCCEEDED(pEnumerator->lpVtbl->EnumAudioEndpoints(pEnumerator, eRender, DEVICE_STATE_ACTIVE, &pCollection)) && pCollection &&
+        SUCCEEDED(pCollection->lpVtbl->GetCount(pCollection, &cDevices)) && cDevices > 1 && cDevices < 256)
+    {
+        UINT uCurrent = 0;
+        for (UINT i = 0; i < cDevices && pwszDefaultId; ++i)
+        {
+            IMMDevice* pDevice = NULL;
+            if (SUCCEEDED(pCollection->lpVtbl->Item(pCollection, i, &pDevice)) && pDevice)
+            {
+                LPWSTR pwszId = NULL;
+                if (SUCCEEDED(pDevice->lpVtbl->GetId(pDevice, &pwszId)) && pwszId)
+                {
+                    if (!wcscmp(pwszId, pwszDefaultId))
+                    {
+                        uCurrent = i;
+                    }
+                    CoTaskMemFree(pwszId);
+                }
+                pDevice->lpVtbl->Release(pDevice);
+            }
+        }
+
+        UINT uNext = (uCurrent + cDevices + (nDirection > 0 ? 1 : -1)) % cDevices;
+        IMMDevice* pNext = NULL;
+        if (SUCCEEDED(pCollection->lpVtbl->Item(pCollection, uNext, &pNext)) && pNext)
+        {
+            LPWSTR pwszNextId = NULL;
+            if (SUCCEEDED(pNext->lpVtbl->GetId(pNext, &pwszNextId)) && pwszNextId)
+            {
+                ET_IPolicyConfig* pPolicyConfig = NULL;
+                if (SUCCEEDED(CoCreateInstance(&ET_CLSID_PolicyConfigClient, NULL, CLSCTX_ALL, &ET_IID_IPolicyConfig, (LPVOID*)&pPolicyConfig)) && pPolicyConfig)
+                {
+                    if (SUCCEEDED(pPolicyConfig->lpVtbl->SetDefaultEndpoint(pPolicyConfig, pwszNextId, eConsole)))
+                    {
+                        pPolicyConfig->lpVtbl->SetDefaultEndpoint(pPolicyConfig, pwszNextId, eMultimedia);
+                        pPolicyConfig->lpVtbl->SetDefaultEndpoint(pPolicyConfig, pwszNextId, eCommunications);
+                        WCHAR wszName[128];
+                        ET_GetDeviceFriendlyName(pNext, wszName, ARRAYSIZE(wszName));
+                        if (wszName[0])
+                        {
+                            ET_ShowPopup(wszName);
+                        }
+                    }
+                    pPolicyConfig->lpVtbl->Release(pPolicyConfig);
+                }
+                CoTaskMemFree(pwszNextId);
+            }
+            pNext->lpVtbl->Release(pNext);
+        }
+    }
+    if (pCollection)
+    {
+        pCollection->lpVtbl->Release(pCollection);
+    }
+    if (pwszDefaultId)
+    {
+        CoTaskMemFree(pwszDefaultId);
+    }
+    pEnumerator->lpVtbl->Release(pEnumerator);
+}
+
+// Returns TRUE when the wheel message was used for switching the device.
+static BOOL ET_OnTaskbarCtrlWheel(int nDelta)
+{
+    static int nRemainder = 0;
+    static DWORD dwLastSwitch = 0;
+    if (!bEssentialAudioDeviceScroll || !(GetKeyState(VK_CONTROL) & 0x8000))
+    {
+        return FALSE;
+    }
+    nRemainder += nDelta;
+    DWORD dwNow = GetTickCount();
+    if (abs(nRemainder) >= WHEEL_DELTA)
+    {
+        int nDirection = nRemainder > 0 ? -1 : 1;
+        nRemainder = 0;
+        if (dwNow - dwLastSwitch >= 250)
+        {
+            dwLastSwitch = dwNow;
+            ET_CycleAudioOutputDevice(nDirection);
+        }
+    }
+    return TRUE;
+}
+#pragma endregion
+
+#pragma region "Remove 'Search the Microsoft Store' from Open with"
+// Port of "Open With - Remove Microsoft Store Menu Item": the item is inserted by shell32 with a known string.
+typedef BOOL(WINAPI* ET_InsertMenuItemW_t)(HMENU hmenu, UINT item, BOOL fByPosition, LPCMENUITEMINFOW lpmi);
+static ET_InsertMenuItemW_t ET_InsertMenuItemWFunc = NULL;
+static ULONG_PTR g_uEssentialShell32Base = 0, g_uEssentialShell32End = 0;
+static WCHAR g_wszEssentialStoreItem[80];
+
+static BOOL WINAPI ET_InsertMenuItemWHook(HMENU hmenu, UINT item, BOOL fByPosition, LPCMENUITEMINFOW lpmi)
+{
+    if (bEssentialRemoveStoreOpenWith && lpmi && (lpmi->fMask & MIIM_STRING) && lpmi->dwTypeData && !IS_INTRESOURCE(lpmi->dwTypeData) &&
+        g_wszEssentialStoreItem[0])
+    {
+        ULONG_PTR uReturnAddress = (ULONG_PTR)_ReturnAddress();
+        if (uReturnAddress >= g_uEssentialShell32Base && uReturnAddress < g_uEssentialShell32End &&
+            !wcscmp(lpmi->dwTypeData, g_wszEssentialStoreItem))
+        {
+            return TRUE;
+        }
+    }
+    return ET_InsertMenuItemWFunc(hmenu, item, fByPosition, lpmi);
+}
+
+static BOOL ET_PrepareStoreItemRemoval(void)
+{
+    if (g_wszEssentialStoreItem[0])
+    {
+        return TRUE;
+    }
+    HMODULE hShell32 = GetModuleHandleW(L"shell32.dll");
+    if (!hShell32)
+    {
+        return FALSE;
+    }
+    const IMAGE_DOS_HEADER* pDosHeader = (const IMAGE_DOS_HEADER*)hShell32;
+    const IMAGE_NT_HEADERS* pNtHeaders = (const IMAGE_NT_HEADERS*)((const BYTE*)hShell32 + pDosHeader->e_lfanew);
+    g_uEssentialShell32Base = (ULONG_PTR)hShell32;
+    g_uEssentialShell32End = g_uEssentialShell32Base + pNtHeaders->OptionalHeader.SizeOfImage;
+    // shell32.dll string 0x1506: "Search the Microsoft Store" (localized)
+    return LoadStringW(hShell32, 0x1506, g_wszEssentialStoreItem, ARRAYSIZE(g_wszEssentialStoreItem)) > 0;
+}
+#pragma endregion
+
+#pragma region "Disable folder thumbnails"
+// Port of "Disable Folder Thumbnails": IThumbnailCache::GetThumbnail fails for plain file system folders, so they
+// keep their regular icon while files still get thumbnails.
+static const GUID ET_CLSID_LocalThumbnailCache = { 0x50EF4544, 0xAC9F, 0x4A8E, { 0xB2, 0x1B, 0x8A, 0x26, 0x18, 0x0D, 0xB1, 0x3F } };
+static const GUID ET_IID_IThumbnailCache = { 0xF676C15D, 0x596A, 0x4CE2, { 0x82, 0x34, 0x33, 0x99, 0x6F, 0x44, 0x5D, 0xB1 } };
+#define ET_WTS_E_FAILEDEXTRACTION ((HRESULT)0x8004B200L)
+
+typedef HRESULT(STDMETHODCALLTYPE* ET_GetThumbnail_t)(void* pThis, IShellItem* pShellItem, UINT cxyRequestedThumbSize, DWORD flags, void** ppvThumb, DWORD* pOutFlags, BYTE* pThumbnailId);
+static ET_GetThumbnail_t ET_GetThumbnailFunc = NULL;
+static volatile LONG g_lEssentialThumbnailHookStarted = 0;
+
+static HRESULT STDMETHODCALLTYPE ET_GetThumbnailHook(void* pThis, IShellItem* pShellItem, UINT cxyRequestedThumbSize, DWORD flags, void** ppvThumb, DWORD* pOutFlags, BYTE* pThumbnailId)
+{
+    if (bEssentialDisableFolderThumbnails && pShellItem)
+    {
+        SFGAOF attributes = 0;
+        if (SUCCEEDED(pShellItem->lpVtbl->GetAttributes(pShellItem, SFGAO_FOLDER | SFGAO_FILESYSTEM | SFGAO_STREAM | SFGAO_LINK, &attributes)) &&
+            (attributes & (SFGAO_FOLDER | SFGAO_FILESYSTEM)) == (SFGAO_FOLDER | SFGAO_FILESYSTEM) &&
+            !(attributes & (SFGAO_STREAM | SFGAO_LINK)))
+        {
+            if (ppvThumb) *ppvThumb = NULL;
+            if (pOutFlags) *pOutFlags = 0;
+            if (pThumbnailId) ZeroMemory(pThumbnailId, 16);
+            return ET_WTS_E_FAILEDEXTRACTION;
+        }
+    }
+    return ET_GetThumbnailFunc(pThis, pShellItem, cxyRequestedThumbSize, flags, ppvThumb, pOutFlags, pThumbnailId);
+}
+
+#if WITH_MAIN_PATCHER
+static DWORD WINAPI ET_ThumbnailHookThread(LPVOID lpParam)
+{
+    UNREFERENCED_PARAMETER(lpParam);
+    BOOL bHooked = FALSE;
+    HRESULT hrInit = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (SUCCEEDED(hrInit) || hrInit == RPC_E_CHANGED_MODE)
+    {
+        IUnknown* pCache = NULL;
+        if (SUCCEEDED(CoCreateInstance(&ET_CLSID_LocalThumbnailCache, NULL, CLSCTX_INPROC_SERVER, &ET_IID_IThumbnailCache, (LPVOID*)&pCache)) && pCache)
+        {
+            // IThumbnailCache: IUnknown (0..2), GetThumbnail (3), GetThumbnailByID (4)
+            void* pTarget = (*(void***)pCache)[3];
+            HMODULE hModule = NULL;
+            if (pTarget && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCWSTR)pTarget, &hModule) && hModule)
+            {
+                ET_GetThumbnailFunc = (ET_GetThumbnail_t)pTarget;
+                if (funchook_prepare(funchook, (void**)&ET_GetThumbnailFunc, ET_GetThumbnailHook) == 0)
+                {
+                    bHooked = TRUE;
+                }
+                else
+                {
+                    ET_GetThumbnailFunc = NULL;
+                }
+            }
+            pCache->lpVtbl->Release(pCache);
+        }
+        if (SUCCEEDED(hrInit))
+        {
+            CoUninitialize();
+        }
+    }
+    if (!bHooked)
+    {
+        InterlockedExchange(&g_lEssentialThumbnailHookStarted, 0);
+    }
+    return 0;
+}
+#endif
+#pragma endregion
+
+#pragma region "Center new windows"
+// Explorer-only variant of "Center New Windows": instead of hooking ShowWindow in every process, an out-of-context
+// WinEvent hook in the shell process moves regular top-level windows to the center of their monitor the first time
+// they are shown. Windows of elevated processes cannot be moved from here and are left alone.
+#define ET_CENTERED_WINDOWS 256
+static HWND g_essentialCenteredWindows[ET_CENTERED_WINDOWS];
+static UINT g_uEssentialCenteredNext = 0;
+static volatile LONG g_lEssentialCenterThreadStarted = 0;
+
+static BOOL ET_ShouldCenterWindow(HWND hWnd)
+{
+    if (!IsWindowVisible(hWnd) || GetAncestor(hWnd, GA_ROOT) != hWnd || GetWindow(hWnd, GW_OWNER) || IsIconic(hWnd) || IsZoomed(hWnd))
+    {
+        return FALSE;
+    }
+    LONG_PTR lStyle = GetWindowLongPtrW(hWnd, GWL_STYLE), lExStyle = GetWindowLongPtrW(hWnd, GWL_EXSTYLE);
+    if ((lStyle & WS_CHILD) || (lStyle & WS_CAPTION) != WS_CAPTION || (lExStyle & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)))
+    {
+        return FALSE;
+    }
+    if (GetPropW(hWnd, L"EPEssentialTabRedirect"))
+    {
+        return FALSE;
+    }
+    BOOL bCloaked = FALSE;
+    if (SUCCEEDED(DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, &bCloaked, sizeof(bCloaked))) && bCloaked)
+    {
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void CALLBACK ET_CenterWinEventProc(HWINEVENTHOOK hHook, DWORD dwEvent, HWND hWnd, LONG idObject, LONG idChild, DWORD dwEventThread, DWORD dwmsEventTime)
+{
+    UNREFERENCED_PARAMETER(hHook);
+    UNREFERENCED_PARAMETER(dwEventThread);
+    UNREFERENCED_PARAMETER(dwmsEventTime);
+    if (!hWnd || idObject != OBJID_WINDOW || idChild != CHILDID_SELF)
+    {
+        return;
+    }
+    if (dwEvent == EVENT_OBJECT_DESTROY)
+    {
+        for (UINT i = 0; i < ET_CENTERED_WINDOWS; ++i)
+        {
+            if (g_essentialCenteredWindows[i] == hWnd)
+            {
+                g_essentialCenteredWindows[i] = NULL;
+            }
+        }
+        return;
+    }
+    if (dwEvent != EVENT_OBJECT_SHOW || !bEssentialCenterNewWindows || !ET_ShouldCenterWindow(hWnd))
+    {
+        return;
+    }
+    for (UINT i = 0; i < ET_CENTERED_WINDOWS; ++i)
+    {
+        if (g_essentialCenteredWindows[i] == hWnd)
+        {
+            return;
+        }
+    }
+    g_essentialCenteredWindows[g_uEssentialCenteredNext] = hWnd;
+    g_uEssentialCenteredNext = (g_uEssentialCenteredNext + 1) % ET_CENTERED_WINDOWS;
+
+    RECT rc;
+    MONITORINFO mi;
+    ZeroMemory(&mi, sizeof(mi));
+    mi.cbSize = sizeof(mi);
+    if (!GetWindowRect(hWnd, &rc) || !GetMonitorInfoW(MonitorFromWindow(hWnd, MONITOR_DEFAULTTONEAREST), &mi))
+    {
+        return;
+    }
+    int cx = rc.right - rc.left, cy = rc.bottom - rc.top;
+    int cxWork = mi.rcWork.right - mi.rcWork.left, cyWork = mi.rcWork.bottom - mi.rcWork.top;
+    if (cx <= 0 || cy <= 0 || cx > cxWork || cy > cyWork)
+    {
+        return;
+    }
+    int x = mi.rcWork.left + (cxWork - cx) / 2, y = mi.rcWork.top + (cyWork - cy) / 2;
+    if (abs(x - rc.left) > 1 || abs(y - rc.top) > 1)
+    {
+        SetWindowPos(hWnd, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+    }
+}
+
+static DWORD WINAPI ET_CenterWindowsThread(LPVOID lpParam)
+{
+    UNREFERENCED_PARAMETER(lpParam);
+    // EVENT_OBJECT_DESTROY (0x8001) and EVENT_OBJECT_SHOW (0x8002) are adjacent.
+    HWINEVENTHOOK hHook = SetWinEventHook(EVENT_OBJECT_DESTROY, EVENT_OBJECT_SHOW, NULL, ET_CenterWinEventProc, 0, 0, WINEVENT_OUTOFCONTEXT);
+    if (!hHook)
+    {
+        InterlockedExchange(&g_lEssentialCenterThreadStarted, 0);
+        return 1;
+    }
+    MSG msg;
+    while (GetMessageW(&msg, NULL, 0, 0) > 0)
+    {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    UnhookWinEvent(hHook);
+    return 0;
+}
+#pragma endregion
+
+#pragma region "Automatic light / dark theme"
+// Simplified port of "Auto Theme Switcher": light mode from the "light" hour, dark mode from the "dark" hour. The
+// theme is only changed when the schedule crosses one of the two hours (or when the option is turned on), so a
+// manual change in between is kept until the next switch time.
+#define ET_PERSONALIZE_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"
+static HANDLE g_hEssentialAutoThemeEvent = NULL;
+static volatile LONG g_lEssentialAutoThemeThreadStarted = 0;
+
+static void ET_SetLightTheme(BOOL bLight)
+{
+    DWORD dwCurrentApps = 2, dwCurrentSystem = 2, dwSize = sizeof(DWORD), dwValue = bLight ? 1 : 0;
+    RegGetValueW(HKEY_CURRENT_USER, ET_PERSONALIZE_KEY, L"AppsUseLightTheme", RRF_RT_REG_DWORD, NULL, &dwCurrentApps, &dwSize);
+    dwSize = sizeof(DWORD);
+    RegGetValueW(HKEY_CURRENT_USER, ET_PERSONALIZE_KEY, L"SystemUsesLightTheme", RRF_RT_REG_DWORD, NULL, &dwCurrentSystem, &dwSize);
+    if (dwCurrentApps == dwValue && dwCurrentSystem == dwValue)
+    {
+        return;
+    }
+    RegSetKeyValueW(HKEY_CURRENT_USER, ET_PERSONALIZE_KEY, L"AppsUseLightTheme", REG_DWORD, &dwValue, sizeof(DWORD));
+    RegSetKeyValueW(HKEY_CURRENT_USER, ET_PERSONALIZE_KEY, L"SystemUsesLightTheme", REG_DWORD, &dwValue, sizeof(DWORD));
+    DWORD_PTR dwResult = 0;
+    SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"ImmersiveColorSet", SMTO_ABORTIFHUNG, 200, &dwResult);
+}
+
+static DWORD WINAPI ET_AutoThemeThread(LPVOID lpParam)
+{
+    UNREFERENCED_PARAMETER(lpParam);
+    int nLastWanted = -1;
+    DWORD dwLastConfig = 0xFFFFFFFF;
+    for (;;)
+    {
+        if (bEssentialAutoTheme)
+        {
+            DWORD dwLightHour = dwEssentialAutoThemeLightHour, dwDarkHour = dwEssentialAutoThemeDarkHour;
+            DWORD dwConfig = (dwLightHour << 8) | dwDarkHour;
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            BOOL bWantLight = (dwLightHour <= dwDarkHour)
+                ? (st.wHour >= dwLightHour && st.wHour < dwDarkHour)
+                : !(st.wHour >= dwDarkHour && st.wHour < dwLightHour);
+            if (dwLightHour != dwDarkHour && ((int)bWantLight != nLastWanted || dwConfig != dwLastConfig))
+            {
+                ET_SetLightTheme(bWantLight);
+            }
+            nLastWanted = (int)bWantLight;
+            dwLastConfig = dwConfig;
+        }
+        else
+        {
+            nLastWanted = -1;
+            dwLastConfig = 0xFFFFFFFF;
+        }
+        if (WaitForSingleObject(g_hEssentialAutoThemeEvent, 30000) == WAIT_FAILED)
+        {
+            break;
+        }
+    }
+    return 0;
+}
+#pragma endregion
+
+#pragma region "Preload context menu handlers"
+// Port of "Context Menu Preloader": the DLLs of the registered context menu handlers are loaded and pinned a few
+// seconds after the shell started, so the first right click does not have to load them.
+#define ET_PRELOAD_DELAY_MS 8000
+static volatile LONG g_lEssentialPreloadStarted = 0;
+
+static BOOL ET_IsPreloadBlacklisted(const WCHAR* wszPathLower, const WCHAR* wszNameLower)
+{
+    static const WCHAR* const wszPathParts[] = {
+        L"ntshrui.dll", L"filesyncshell64.dll", L"workfolders", L"sharing", L"mscoree.dll", L"appresolver.dll", L"acppage.dll",
+        L"twinui", L"windows.share", L"datatransfer", L"playtomenu.dll", L"bluetooth", L"fsquirt.dll", L"windows defender",
+        L"shellext.dll", L"zipfldr.dll",
+    };
+    for (UINT i = 0; i < ARRAYSIZE(wszPathParts); ++i)
+    {
+        if (wcsstr(wszPathLower, wszPathParts[i]))
+        {
+            return TRUE;
+        }
+    }
+    return wcsstr(wszNameLower, L"play to") || wcsstr(wszNameLower, L"print");
+}
+
+static void ET_PreloadHandlerClsid(const WCHAR* wszClsid, const WCHAR* wszName)
+{
+    WCHAR wszKey[128], wszRaw[MAX_PATH], wszPath[MAX_PATH], wszNameLower[128];
+    DWORD cbRaw = sizeof(wszRaw) - sizeof(WCHAR);
+    if (wszClsid[0] != L'{' || _snwprintf_s(wszKey, ARRAYSIZE(wszKey), _TRUNCATE, L"CLSID\\%s\\InProcServer32", wszClsid) < 0)
+    {
+        return;
+    }
+    // Two handlers the original mod skips explicitly.
+    if (!_wcsicmp(wszClsid, L"{6af09ec9-b429-11d4-a1fb-0090273514e2}") || !_wcsicmp(wszClsid, L"{e2bf9676-5f8f-435c-97eb-11607a5bedf7}"))
+    {
+        return;
+    }
+    ZeroMemory(wszRaw, sizeof(wszRaw));
+    if (RegGetValueW(HKEY_CLASSES_ROOT, wszKey, NULL, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND, NULL, wszRaw, &cbRaw) != ERROR_SUCCESS || !wszRaw[0])
+    {
+        return;
+    }
+    // Strip quotes, a leading '@' and a trailing ",resource".
+    WCHAR* pStart = wszRaw;
+    if (*pStart == L'"')
+    {
+        pStart++;
+        WCHAR* pEnd = wcschr(pStart, L'"');
+        if (pEnd) *pEnd = 0;
+    }
+    if (*pStart == L'@')
+    {
+        pStart++;
+    }
+    WCHAR* pComma = wcschr(pStart, L',');
+    if (pComma) *pComma = 0;
+
+    DWORD cch = ExpandEnvironmentStringsW(pStart, wszPath, ARRAYSIZE(wszPath));
+    if (cch == 0 || cch > ARRAYSIZE(wszPath))
+    {
+        return;
+    }
+    wcsncpy_s(wszNameLower, ARRAYSIZE(wszNameLower), wszName ? wszName : L"", _TRUNCATE);
+    CharLowerBuffW(wszNameLower, (DWORD)wcslen(wszNameLower));
+    WCHAR wszPathLower[MAX_PATH];
+    wcsncpy_s(wszPathLower, ARRAYSIZE(wszPathLower), wszPath, _TRUNCATE);
+    CharLowerBuffW(wszPathLower, (DWORD)wcslen(wszPathLower));
+    if (ET_IsPreloadBlacklisted(wszPathLower, wszNameLower))
+    {
+        return;
+    }
+    if (wcschr(wszPath, L'\\') && GetFileAttributesW(wszPath) == INVALID_FILE_ATTRIBUTES)
+    {
+        return;
+    }
+    if (GetModuleHandleW(wszPath))
+    {
+        return;
+    }
+    HMODULE hModule = LoadLibraryExW(wszPath, NULL, wcschr(wszPath, L'\\') ? LOAD_WITH_ALTERED_SEARCH_PATH : 0);
+    if (hModule)
+    {
+        HMODULE hPinned = NULL;
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN | GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCWSTR)hModule, &hPinned))
+        {
+            FreeLibrary(hModule);
+        }
+    }
+}
+
+static void ET_PreloadHandlersUnder(const WCHAR* wszPath)
+{
+    HKEY hKey = NULL;
+    if (RegOpenKeyExW(HKEY_CLASSES_ROOT, wszPath, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+    {
+        return;
+    }
+    for (DWORD dwIndex = 0; dwIndex < 256; ++dwIndex)
+    {
+        WCHAR wszSubKey[128], wszValue[128];
+        DWORD cchSubKey = ARRAYSIZE(wszSubKey);
+        LSTATUS lStatus = RegEnumKeyExW(hKey, dwIndex, wszSubKey, &cchSubKey, NULL, NULL, NULL, NULL);
+        if (lStatus == ERROR_MORE_DATA)
+        {
+            continue;
+        }
+        if (lStatus != ERROR_SUCCESS)
+        {
+            break;
+        }
+        if (wszSubKey[0] == L'{')
+        {
+            ET_PreloadHandlerClsid(wszSubKey, L"");
+            continue;
+        }
+        DWORD cbValue = sizeof(wszValue) - sizeof(WCHAR);
+        ZeroMemory(wszValue, sizeof(wszValue));
+        if (RegGetValueW(hKey, wszSubKey, NULL, RRF_RT_REG_SZ, NULL, wszValue, &cbValue) == ERROR_SUCCESS && wszValue[0] == L'{')
+        {
+            ET_PreloadHandlerClsid(wszValue, wszSubKey);
+        }
+    }
+    RegCloseKey(hKey);
+}
+
+static DWORD WINAPI ET_PreloadContextMenuThread(LPVOID lpParam)
+{
+    static const WCHAR* const wszLocations[] = {
+        L"*\\ShellEx\\ContextMenuHandlers",
+        L"AllFileSystemObjects\\ShellEx\\ContextMenuHandlers",
+        L"Directory\\Background\\ShellEx\\ContextMenuHandlers",
+        L"Directory\\ShellEx\\ContextMenuHandlers",
+        L"Folder\\ShellEx\\ContextMenuHandlers",
+        L"Drive\\ShellEx\\ContextMenuHandlers",
+        L"SystemFileAssociations\\image\\ShellEx\\ContextMenuHandlers",
+    };
+    UNREFERENCED_PARAMETER(lpParam);
+    Sleep(ET_PRELOAD_DELAY_MS);
+    HRESULT hrInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    for (UINT i = 0; i < ARRAYSIZE(wszLocations); ++i)
+    {
+        ET_PreloadHandlersUnder(wszLocations[i]);
+    }
+    if (SUCCEEDED(hrInit))
+    {
+        CoUninitialize();
+    }
+    return 0;
+}
+#pragma endregion
+
+#pragma region "Workers of the shell process"
+static BOOL g_bEssentialShellProcess = FALSE;
+
+static void ET_StartThreadOnce(volatile LONG* plStarted, LPTHREAD_START_ROUTINE pfnThread)
+{
+    if (InterlockedCompareExchange(plStarted, 1, 0) != 0)
+    {
+        return;
+    }
+    HANDLE hThread = CreateThread(NULL, 0, pfnThread, NULL, 0, NULL);
+    if (hThread)
+    {
+        CloseHandle(hThread);
+    }
+    else
+    {
+        InterlockedExchange(plStarted, 0);
+    }
+}
+
+// System wide helpers only run in the process that owns the taskbar; called from EssentialTweaks_Start and whenever
+// the settings were reloaded.
+static void ET_UpdateShellWorkers(void)
+{
+    if (!g_bEssentialShellProcess)
+    {
+        return;
+    }
+    if (bEssentialCenterNewWindows)
+    {
+        ET_StartThreadOnce(&g_lEssentialCenterThreadStarted, ET_CenterWindowsThread);
+    }
+    if (bEssentialAutoTheme)
+    {
+        if (!g_hEssentialAutoThemeEvent)
+        {
+            g_hEssentialAutoThemeEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+        }
+        if (g_hEssentialAutoThemeEvent)
+        {
+            ET_StartThreadOnce(&g_lEssentialAutoThemeThreadStarted, ET_AutoThemeThread);
+        }
+    }
+    if (g_hEssentialAutoThemeEvent)
+    {
+        // Re-evaluate the schedule right away when the settings changed.
+        SetEvent(g_hEssentialAutoThemeEvent);
+    }
+}
+#pragma endregion
+
 #pragma region "Hooks installed on demand"
 // These hooks sit on very hot functions, so each group is only installed the first time its option is on
 // (SlimDetours hooks take effect immediately). They stay installed afterwards and check the option themselves.
@@ -2584,6 +3382,15 @@ static void ET_UpdateOnDemandHooks(void)
                 ET_InstallHook(GetModuleHandleW(L"gdi32.dll"), "BitBlt", (void**)&ET_BitBltFunc, ET_BitBltHook);
             }
         }
+        if (bEssentialRemoveStoreOpenWith && ET_PrepareStoreItemRemoval())
+        {
+            ET_InstallHook(GetModuleHandleW(L"user32.dll"), "InsertMenuItemW", (void**)&ET_InsertMenuItemWFunc, ET_InsertMenuItemWHook);
+        }
+        if (bEssentialDisableFolderThumbnails && !ET_GetThumbnailFunc)
+        {
+            // The target is found through COM, which needs a thread of its own.
+            ET_StartThreadOnce(&g_lEssentialThumbnailHookStarted, ET_ThumbnailHookThread);
+        }
         if (bEssentialShowAllTrayIcons && IsWindows11Version22H2OrHigher())
         {
             if (!ET_NtQueryKeyFunc)
@@ -2632,6 +3439,12 @@ void EssentialTweaks_PrepareHooks(void)
 
 void EssentialTweaks_Start(void)
 {
+    g_bEssentialShellProcess = TRUE;
+    ET_UpdateShellWorkers();
+    if (bEssentialPreloadContextMenu)
+    {
+        ET_StartThreadOnce(&g_lEssentialPreloadStarted, ET_PreloadContextMenuThread);
+    }
     if (dwEssentialTrayIconFix)
     {
         HANDLE hThread = CreateThread(NULL, 0, ET_TrayIconFixThread, (LPVOID)(DWORD_PTR)dwEssentialTrayIconFix, 0, NULL);

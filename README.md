@@ -24,6 +24,12 @@ The tweaks are C ports of the following [Windhawk mods](https://github.com/ramen
 | Double click an empty area of the desktop to hide or show the icons | [ZenDesktop: Desktop Icon Toggle](https://windhawk.net/mods/zen-desktop-toggle-icons) (manual toggle only) | Lanbo |
 | Hide the labels of desktop icons, hide the shortcut arrows on icons | [Hide Desktop Icon Text and Shortcut Arrows](https://windhawk.net/mods/hide-desktop-icon-text) | kivsak |
 | Do not delay startup apps after sign-in (registry based; existing values are left alone) | [Startup App Delay Fix](https://windhawk.net/mods/startup-app-delay-fix) (idea) | meteoni |
+| Ctrl + scroll over the taskbar switches the audio output device (with a small popup naming the device) | [Audio Output Device Switcher](https://windhawk.net/mods/audio-scroll-switcher) | Georgi AI |
+| Do not show content previews on folder icons | [Disable Folder Thumbnails](https://windhawk.net/mods/disable-folder-thumbnails) | Anixx |
+| Remove the Microsoft Store search item from the Open with menu | [Open With - Remove Microsoft Store Menu Item](https://windhawk.net/mods/remove-ms-store-open-with) | aubymori |
+| Preload context menu handlers for a faster first right click | [Context Menu Preloader](https://windhawk.net/mods/context-menu-preloader) | Lockframe |
+| Open new windows in the center of the screen (WinEvent based, no injection into other processes) | [Center New Windows](https://windhawk.net/mods/center-new-windows) (idea) | crazyboyybs |
+| Switch between light and dark mode at fixed hours | [Auto Theme Switcher](https://windhawk.net/mods/auto-theme-switcher) (simplified) | tinodin |
 
 The page scrolls (mouse wheel, Page Up / Page Down, Home / End, and keyboard focus is kept in view). All settings on
 the page are included in the "Export current settings" / "Import settings" feature. ExplorerPatcher++

@@ -635,6 +635,9 @@
 ;x 7 %R:2428%
 ;x 8 %R:2429%
 "EssentialTaskbarMiddleClickAction"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2443%
+"EssentialAudioDeviceScroll"=dword:00000000
 ;a %R:2418%
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2413%
@@ -648,6 +651,15 @@
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2440%
 "EssentialBlockF1Help"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2444%
+"EssentialDisableFolderThumbnails"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2445%
+"EssentialRemoveStoreOpenWith"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2446% *
+"EssentialPreloadContextMenu"=dword:00000000
 ;a %R:2441%
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2434%
@@ -662,6 +674,66 @@
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2439%
 "EssentialNoStartupDelay"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2447%
+"EssentialCenterNewWindows"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2448%
+"EssentialAutoTheme"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;c 24 %R:2449%
+;x 0 00:00
+;x 1 01:00
+;x 2 02:00
+;x 3 03:00
+;x 4 04:00
+;x 5 05:00
+;x 6 06:00
+;x 7 07:00
+;x 8 08:00
+;x 9 09:00
+;x 10 10:00
+;x 11 11:00
+;x 12 12:00
+;x 13 13:00
+;x 14 14:00
+;x 15 15:00
+;x 16 16:00
+;x 17 17:00
+;x 18 18:00
+;x 19 19:00
+;x 20 20:00
+;x 21 21:00
+;x 22 22:00
+;x 23 23:00
+"EssentialAutoThemeLightHour"=dword:00000007
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;c 24 %R:2450%
+;x 0 00:00
+;x 1 01:00
+;x 2 02:00
+;x 3 03:00
+;x 4 04:00
+;x 5 05:00
+;x 6 06:00
+;x 7 07:00
+;x 8 08:00
+;x 9 09:00
+;x 10 10:00
+;x 11 11:00
+;x 12 12:00
+;x 13 13:00
+;x 14 14:00
+;x 15 15:00
+;x 16 16:00
+;x 17 17:00
+;x 18 18:00
+;x 19 19:00
+;x 20 20:00
+;x 21 21:00
+;x 22 22:00
+;x 23 23:00
+"EssentialAutoThemeDarkHour"=dword:00000013
 
 
 ;T %R:2301%

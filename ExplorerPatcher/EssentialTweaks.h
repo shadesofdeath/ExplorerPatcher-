@@ -18,6 +18,12 @@
 //   * taskbar-notification-icons-show-all (m417z)     - always show all tray icons on the Windows 11 taskbar
 //   * startup-app-delay-fix             (meteoni, registry based variant) - no delay before startup apps are launched
 //   * f1-blocker                        (d0gkiller87) - F1 does not open the help web page in File Explorer
+//   * audio-scroll-switcher             (Georgi AI)   - Ctrl + scroll over the taskbar switches the audio output device
+//   * remove-ms-store-open-with         (aubymori)    - no "Search the Microsoft Store" item in Open with
+//   * disable-folder-thumbnails         (Anixx)       - folders keep their icon, files keep their thumbnails
+//   * center-new-windows                (crazyboyybs, WinEvent based variant) - new windows open centered
+//   * auto-theme-switcher               (tinodin, fixed hours only) - light / dark mode on a schedule
+//   * context-menu-preloader            (Lockframe)   - context menu handlers are loaded ahead of the first right click
 //
 // All tweaks are disabled by default and are configured from the "Essential Tweaks" page of the Properties window.
 //
@@ -54,6 +60,15 @@ extern DWORD bEssentialFixExplorerWhiteFlash;
 extern DWORD bEssentialShowAllTrayIcons;
 extern DWORD bEssentialNoStartupDelay;
 extern DWORD bEssentialBlockF1Help;
+extern DWORD bEssentialAudioDeviceScroll;
+extern DWORD bEssentialRemoveStoreOpenWith;
+extern DWORD bEssentialDisableFolderThumbnails;
+extern DWORD bEssentialCenterNewWindows;
+// Light mode from dwEssentialAutoThemeLightHour (0..23), dark mode from dwEssentialAutoThemeDarkHour
+extern DWORD bEssentialAutoTheme;
+extern DWORD dwEssentialAutoThemeLightHour;
+extern DWORD dwEssentialAutoThemeDarkHour;
+extern DWORD bEssentialPreloadContextMenu;
 
 // Reads the tweak values from the ExplorerPatcher registry key (called from LoadSettings).
 void EssentialTweaks_LoadSettings(HKEY hKey);

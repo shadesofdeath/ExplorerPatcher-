@@ -49,4 +49,12 @@ BEGIN
     IDS_ESSENTIAL_BLOCKF1         "F1 yardım web sayfasını açmasın"
     IDS_ESSENTIAL_DESKTOP         "Masaüstü"
     IDS_ESSENTIAL_SYSTEM          "Sistem"
+    IDS_ESSENTIAL_AUDIODEVSCROLL  "Görev çubuğunda Ctrl + tekerlek ses çıkış cihazını değiştirsin"
+    IDS_ESSENTIAL_NOFOLDERTHUMBS  "Klasör simgelerinde içerik önizlemesi gösterme"
+    IDS_ESSENTIAL_REMOVESTORE     "Birlikte aç menüsünden Microsoft Store arama öğesini kaldır"
+    IDS_ESSENTIAL_PRELOADMENU     "Sağ tık menüsü eklentilerini önceden yükle (ilk sağ tık hızlanır)"
+    IDS_ESSENTIAL_CENTERWINDOWS   "Yeni pencereleri ekranın ortasında aç"
+    IDS_ESSENTIAL_AUTOTHEME       "Açık ve koyu mod arasında otomatik geçiş yap"
+    IDS_ESSENTIAL_AUTOTHEME_LIGHT "Açık modun başlama saati"
+    IDS_ESSENTIAL_AUTOTHEME_DARK  "Koyu modun başlama saati"
 END
