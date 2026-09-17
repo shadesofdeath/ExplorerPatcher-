@@ -8,6 +8,7 @@
 #include <commctrl.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <shellapi.h>
 #include <exdisp.h>
 #include <servprov.h>
 #include <mmdeviceapi.h>
@@ -26,6 +27,11 @@ DWORD dwEssentialTrayIconFix = 0;
 DWORD bEssentialDisableExtensionWarning = FALSE;
 DWORD bEssentialExplorerDoubleClickUp = FALSE;
 DWORD bEssentialReopenClosedTab = FALSE;
+DWORD dwEssentialTaskbarDoubleClickAction = 0;
+DWORD dwEssentialTaskbarMiddleClickAction = 0;
+DWORD bEssentialHideExplorerHome = FALSE;
+DWORD bEssentialHideExplorerGallery = FALSE;
+DWORD bEssentialHideExplorerOneDrive = FALSE;
 
 // GUIDs are defined locally so that the module does not depend on uuid.lib / the SDK's MIDL-generated definitions.
 static const GUID ET_CLSID_MMDeviceEnumerator = { 0xBCDE0395, 0xE52F, 0x467C, { 0x8E, 0x3D, 0xC4, 0x57, 0x92, 0x91, 0x69, 0x2E } };
@@ -41,6 +47,18 @@ static const GUID ET_IID_IFolderView = { 0xCDE725B0, 0xCCC9, 0x4519, { 0x91, 0x7
 static const GUID ET_IID_IPersistFolder2 = { 0x1AC3D9F0, 0x175C, 0x11D1, { 0x95, 0xBE, 0x00, 0x60, 0x97, 0x97, 0xEA, 0x4F } };
 
 #define ET_CLASSNAME_CCH 64
+
+// Actions that can be assigned to a double click / middle click on empty taskbar space.
+#define ET_TASKBAR_ACTION_NONE 0
+#define ET_TASKBAR_ACTION_SHOW_DESKTOP 1
+#define ET_TASKBAR_ACTION_TASK_MANAGER 2
+#define ET_TASKBAR_ACTION_START_MENU 3
+#define ET_TASKBAR_ACTION_MUTE 4
+#define ET_TASKBAR_ACTION_MEDIA_PLAY_PAUSE 5
+#define ET_TASKBAR_ACTION_TOGGLE_AUTOHIDE 6
+#define ET_TASKBAR_ACTION_TASK_VIEW 7
+#define ET_TASKBAR_ACTION_LOCK 8
+#define ET_TASKBAR_ACTION_COUNT 9
 
 static BOOL ET_GetClassName(HWND hWnd, WCHAR* wszClass, size_t cch)
 {
@@ -64,6 +82,8 @@ static BOOL ET_IsExplorerWindowForeground(void)
 }
 
 #pragma region "Settings"
+static void ET_ApplyNavigationPaneVisibility(HKEY hKey);
+
 static DWORD ET_ReadDword(HKEY hKey, LPCWSTR lpValueName, DWORD dwDefault)
 {
     DWORD dwValue = dwDefault;
@@ -99,6 +119,16 @@ void EssentialTweaks_LoadSettings(HKEY hKey)
     bEssentialDisableExtensionWarning = ET_ReadDword(hKey, L"EssentialDisableExtensionWarning", 0) ? TRUE : FALSE;
     bEssentialExplorerDoubleClickUp = ET_ReadDword(hKey, L"EssentialExplorerDoubleClickUp", 0) ? TRUE : FALSE;
     bEssentialReopenClosedTab = ET_ReadDword(hKey, L"EssentialReopenClosedTab", 0) ? TRUE : FALSE;
+
+    dwValue = ET_ReadDword(hKey, L"EssentialTaskbarDoubleClickAction", 0);
+    dwEssentialTaskbarDoubleClickAction = (dwValue < ET_TASKBAR_ACTION_COUNT) ? dwValue : 0;
+    dwValue = ET_ReadDword(hKey, L"EssentialTaskbarMiddleClickAction", 0);
+    dwEssentialTaskbarMiddleClickAction = (dwValue < ET_TASKBAR_ACTION_COUNT) ? dwValue : 0;
+
+    bEssentialHideExplorerHome = ET_ReadDword(hKey, L"EssentialHideExplorerHome", 0) ? TRUE : FALSE;
+    bEssentialHideExplorerGallery = ET_ReadDword(hKey, L"EssentialHideExplorerGallery", 0) ? TRUE : FALSE;
+    bEssentialHideExplorerOneDrive = ET_ReadDword(hKey, L"EssentialHideExplorerOneDrive", 0) ? TRUE : FALSE;
+    ET_ApplyNavigationPaneVisibility(hKey);
 }
 #pragma endregion
 
@@ -254,6 +284,486 @@ BOOL EssentialTweaks_OnTaskbarMouseWheel(HWND hWnd, WPARAM wParam, LPARAM lParam
 
     ET_AdjustVolumeByWheelDelta(GET_WHEEL_DELTA_WPARAM(wParam));
     return TRUE;
+}
+#pragma endregion
+
+#pragma region "Taskbar empty space click actions"
+// Simplified port of "Click on empty taskbar space": one action for a double click and one for a middle click.
+// Windows 10 (and ep_taskbar) taskbar: clicks on empty space reach the Shell_TrayWnd / Shell_SecondaryTrayWnd window
+// procedure itself (the task list is transparent to hit testing there), so the subclass procedure is enough.
+// Windows 11 taskbar: the XAML island receives its input as WM_POINTER* messages in the
+// "Windows.UI.Input.InputSite.WindowClass" child window, whose window procedure is hooked inline (see
+// EssentialTweaks_OnTaskbarTimer); older builds deliver regular mouse messages, which the WH_MOUSE hook of the
+// taskbar thread sees. In both cases UI Automation confirms that the point is on empty space.
+
+static BOOL ET_IsTaskbarWindow(HWND hWnd)
+{
+    WCHAR wszClass[ET_CLASSNAME_CCH];
+    if (!ET_GetClassName(hWnd, wszClass, ARRAYSIZE(wszClass)))
+    {
+        return FALSE;
+    }
+    return !wcscmp(wszClass, L"Shell_TrayWnd") || !wcscmp(wszClass, L"Shell_SecondaryTrayWnd");
+}
+
+static void ET_SendKeyCombination(const WORD* pwKeys, UINT cKeys)
+{
+    INPUT inputs[8];
+    if (!pwKeys || cKeys == 0 || cKeys * 2 > ARRAYSIZE(inputs))
+    {
+        return;
+    }
+    ZeroMemory(inputs, sizeof(inputs));
+    for (UINT i = 0; i < cKeys; ++i)
+    {
+        inputs[i].type = INPUT_KEYBOARD;
+        inputs[i].ki.wVk = pwKeys[i];
+        // Released in reverse order.
+        inputs[cKeys * 2 - 1 - i].type = INPUT_KEYBOARD;
+        inputs[cKeys * 2 - 1 - i].ki.wVk = pwKeys[i];
+        inputs[cKeys * 2 - 1 - i].ki.dwFlags = KEYEVENTF_KEYUP;
+    }
+    SendInput(cKeys * 2, inputs, sizeof(INPUT));
+}
+
+static BOOL ET_ToggleMasterMute(void)
+{
+    IMMDeviceEnumerator* pEnumerator = NULL;
+    IMMDevice* pDevice = NULL;
+    IAudioEndpointVolume* pEndpointVolume = NULL;
+    BOOL bSuccess = FALSE;
+
+    if (FAILED(CoCreateInstance(&ET_CLSID_MMDeviceEnumerator, NULL, CLSCTX_INPROC_SERVER, &ET_IID_IMMDeviceEnumerator, (LPVOID*)&pEnumerator)) || !pEnumerator)
+    {
+        return FALSE;
+    }
+    if (SUCCEEDED(pEnumerator->lpVtbl->GetDefaultAudioEndpoint(pEnumerator, eRender, eConsole, &pDevice)) && pDevice)
+    {
+        if (SUCCEEDED(pDevice->lpVtbl->Activate(pDevice, &ET_IID_IAudioEndpointVolume, CLSCTX_INPROC_SERVER, NULL, (LPVOID*)&pEndpointVolume)) && pEndpointVolume)
+        {
+            BOOL bMuted = FALSE;
+            if (SUCCEEDED(pEndpointVolume->lpVtbl->GetMute(pEndpointVolume, &bMuted)))
+            {
+                bSuccess = SUCCEEDED(pEndpointVolume->lpVtbl->SetMute(pEndpointVolume, !bMuted, NULL));
+            }
+            pEndpointVolume->lpVtbl->Release(pEndpointVolume);
+        }
+        pDevice->lpVtbl->Release(pDevice);
+    }
+    pEnumerator->lpVtbl->Release(pEnumerator);
+    return bSuccess;
+}
+
+static void ET_OpenTaskManager(void)
+{
+    WCHAR wszPath[MAX_PATH];
+    UINT cch = GetSystemDirectoryW(wszPath, ARRAYSIZE(wszPath));
+    if (cch == 0 || cch >= ARRAYSIZE(wszPath) || wcscat_s(wszPath, ARRAYSIZE(wszPath), L"\\Taskmgr.exe") != 0)
+    {
+        return;
+    }
+    SHELLEXECUTEINFOW sei;
+    ZeroMemory(&sei, sizeof(sei));
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_ASYNCOK | SEE_MASK_FLAG_NO_UI;
+    sei.lpVerb = L"open";
+    sei.lpFile = wszPath;
+    sei.nShow = SW_SHOWNORMAL;
+    ShellExecuteExW(&sei);
+}
+
+static void ET_ToggleTaskbarAutoHide(void)
+{
+    APPBARDATA abd;
+    ZeroMemory(&abd, sizeof(abd));
+    abd.cbSize = sizeof(abd);
+    BOOL bAutoHide = (SHAppBarMessage(ABM_GETSTATE, &abd) & ABS_AUTOHIDE) != 0;
+    abd.lParam = bAutoHide ? 0 : ABS_AUTOHIDE;
+    SHAppBarMessage(ABM_SETSTATE, &abd);
+}
+
+void EssentialTweaks_PerformTaskbarAction(DWORD dwAction)
+{
+    HWND hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+    switch (dwAction)
+    {
+    case ET_TASKBAR_ACTION_SHOW_DESKTOP:
+        if (hTaskbar)
+        {
+            // 407: the taskbar's "toggle desktop" command
+            PostMessageW(hTaskbar, WM_COMMAND, MAKEWPARAM(407, 0), 0);
+        }
+        break;
+    case ET_TASKBAR_ACTION_TASK_MANAGER:
+        ET_OpenTaskManager();
+        break;
+    case ET_TASKBAR_ACTION_START_MENU:
+        if (hTaskbar)
+        {
+            PostMessageW(hTaskbar, WM_SYSCOMMAND, SC_TASKLIST, 0);
+        }
+        break;
+    case ET_TASKBAR_ACTION_MUTE:
+        // The APPCOMMAND makes Windows show its volume indicator; fall back to Core Audio without the legacy taskbar.
+        if (!ET_PostVolumeAppCommand(APPCOMMAND_VOLUME_MUTE))
+        {
+            ET_ToggleMasterMute();
+        }
+        break;
+    case ET_TASKBAR_ACTION_MEDIA_PLAY_PAUSE:
+    {
+        const WORD wKeys[] = { VK_MEDIA_PLAY_PAUSE };
+        ET_SendKeyCombination(wKeys, ARRAYSIZE(wKeys));
+        break;
+    }
+    case ET_TASKBAR_ACTION_TOGGLE_AUTOHIDE:
+        ET_ToggleTaskbarAutoHide();
+        break;
+    case ET_TASKBAR_ACTION_TASK_VIEW:
+    {
+        const WORD wKeys[] = { VK_LWIN, VK_TAB };
+        ET_SendKeyCombination(wKeys, ARRAYSIZE(wKeys));
+        break;
+    }
+    case ET_TASKBAR_ACTION_LOCK:
+        LockWorkStation();
+        break;
+    default:
+        break;
+    }
+}
+
+// All gesture sources funnel through here; a build that reports the same click through two sources must not run
+// the action twice.
+static void ET_TriggerTaskbarGesture(DWORD dwAction)
+{
+    static DWORD dwLastTriggerTime = 0;
+    DWORD dwNow = GetTickCount();
+    if (!dwAction || dwNow - dwLastTriggerTime < 300)
+    {
+        return;
+    }
+    dwLastTriggerTime = dwNow;
+    EssentialTweaks_PerformTaskbarAction(dwAction);
+}
+
+static BOOL ET_IsPointOnEmptyTaskbarSpace(POINT pt)
+{
+    WCHAR wszClass[ET_CLASSNAME_CCH];
+    if (!EssentialTweaks_GetUIAutomationClassNameAtPoint(pt, wszClass, ARRAYSIZE(wszClass)))
+    {
+        return FALSE;
+    }
+    return !wcscmp(wszClass, L"Taskbar.TaskbarFrameAutomationPeer") ||         // Windows 11 taskbar
+        !wcscmp(wszClass, L"Windows.UI.Input.InputSite.WindowClass") ||        // Windows 11 21H2 taskbar
+        !wcscmp(wszClass, L"Shell_TrayWnd") ||
+        !wcscmp(wszClass, L"Shell_SecondaryTrayWnd");
+}
+
+BOOL EssentialTweaks_OnTaskbarMouseMessage(HWND hWnd, UINT uMsg)
+{
+    static HWND hMiddleDownWnd = NULL;
+    switch (uMsg)
+    {
+    case WM_LBUTTONDBLCLK:
+    case WM_NCLBUTTONDBLCLK:
+        if (dwEssentialTaskbarDoubleClickAction)
+        {
+            ET_TriggerTaskbarGesture(dwEssentialTaskbarDoubleClickAction);
+            return TRUE;
+        }
+        break;
+    case WM_MBUTTONDOWN:
+    case WM_NCMBUTTONDOWN:
+        hMiddleDownWnd = dwEssentialTaskbarMiddleClickAction ? hWnd : NULL;
+        break;
+    case WM_MBUTTONUP:
+    case WM_NCMBUTTONUP:
+        if (dwEssentialTaskbarMiddleClickAction && hMiddleDownWnd == hWnd)
+        {
+            hMiddleDownWnd = NULL;
+            ET_TriggerTaskbarGesture(dwEssentialTaskbarMiddleClickAction);
+            return TRUE;
+        }
+        hMiddleDownWnd = NULL;
+        break;
+    default:
+        break;
+    }
+    return FALSE;
+}
+
+// Shared by the WH_MOUSE hook (button releases) and the InputSite subclass (pointer presses): returns the action
+// of the gesture that this click completes. Clicks closer together than ET_DUPLICATE_CLICK_MS are the same
+// physical click reported twice.
+#define ET_DUPLICATE_CLICK_MS 40
+static DWORD ET_GetTaskbarGestureAction(BOOL bMiddle, POINT pt)
+{
+    static DWORD dwLastLeftTime = 0;
+    static POINT ptLastLeft;
+    static BOOL bHaveLastLeft = FALSE;
+    static DWORD dwLastMiddleTime = 0;
+
+    DWORD dwNow = GetTickCount();
+    if (bMiddle)
+    {
+        if (!dwEssentialTaskbarMiddleClickAction || dwNow - dwLastMiddleTime < ET_DUPLICATE_CLICK_MS)
+        {
+            return ET_TASKBAR_ACTION_NONE;
+        }
+        dwLastMiddleTime = dwNow;
+        return dwEssentialTaskbarMiddleClickAction;
+    }
+
+    if (!dwEssentialTaskbarDoubleClickAction)
+    {
+        return ET_TASKBAR_ACTION_NONE;
+    }
+    if (bHaveLastLeft)
+    {
+        DWORD dwElapsed = dwNow - dwLastLeftTime;
+        if (dwElapsed < ET_DUPLICATE_CLICK_MS)
+        {
+            return ET_TASKBAR_ACTION_NONE;
+        }
+        if (dwElapsed <= GetDoubleClickTime() &&
+            abs(pt.x - ptLastLeft.x) <= GetSystemMetrics(SM_CXDOUBLECLK) &&
+            abs(pt.y - ptLastLeft.y) <= GetSystemMetrics(SM_CYDOUBLECLK))
+        {
+            bHaveLastLeft = FALSE;
+            return dwEssentialTaskbarDoubleClickAction;
+        }
+    }
+    bHaveLastLeft = TRUE;
+    dwLastLeftTime = dwNow;
+    ptLastLeft = pt;
+    return ET_TASKBAR_ACTION_NONE;
+}
+
+void EssentialTweaks_OnTaskbarThreadMouseHook(WPARAM wMouseMsg, const MOUSEHOOKSTRUCT* pMouse)
+{
+    if (!pMouse || (!dwEssentialTaskbarDoubleClickAction && !dwEssentialTaskbarMiddleClickAction))
+    {
+        return;
+    }
+    if (wMouseMsg != WM_LBUTTONUP && wMouseMsg != WM_MBUTTONUP)
+    {
+        return;
+    }
+    if (!ET_IsTaskbarWindow(GetAncestor(pMouse->hwnd, GA_ROOT)))
+    {
+        return;
+    }
+    DWORD dwAction = ET_GetTaskbarGestureAction(wMouseMsg == WM_MBUTTONUP, pMouse->pt);
+    if (dwAction && ET_IsPointOnEmptyTaskbarSpace(pMouse->pt))
+    {
+        ET_TriggerTaskbarGesture(dwAction);
+    }
+}
+
+// Windows 11 taskbar input window. The window cannot be subclassed (InputHost.dll verifies its window procedure and
+// fails fast when it was replaced), so the window procedure itself is hooked inline instead. The procedure is
+// shared by every InputSite window of the process, hence the cheap message checks first and the taskbar check after.
+typedef LRESULT(CALLBACK* ET_WndProc_t)(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+static ET_WndProc_t ET_InputSiteWndProcFunc = NULL;
+
+static LRESULT CALLBACK ET_InputSiteWndProcHook(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    if (uMsg == WM_POINTERWHEEL)
+    {
+        if (dwEssentialTaskbarVolumeScroll)
+        {
+            // Same parameter layout as WM_MOUSEWHEEL: wheel delta in the high word, screen coordinates in lParam.
+            HWND hTaskbar = GetAncestor(hWnd, GA_ROOT);
+            if (ET_IsTaskbarWindow(hTaskbar) && EssentialTweaks_OnTaskbarMouseWheel(hTaskbar, wParam, lParam))
+            {
+                return 0;
+            }
+        }
+    }
+    else if (uMsg == WM_POINTERDOWN && (dwEssentialTaskbarDoubleClickAction || dwEssentialTaskbarMiddleClickAction))
+    {
+        BOOL bLeft = IS_POINTER_FIRSTBUTTON_WPARAM(wParam) != 0;
+        BOOL bMiddle = IS_POINTER_THIRDBUTTON_WPARAM(wParam) != 0;
+        if ((bLeft || bMiddle) && ET_IsTaskbarWindow(GetAncestor(hWnd, GA_ROOT)))
+        {
+            POINT pt;
+            pt.x = GET_X_LPARAM(lParam);
+            pt.y = GET_Y_LPARAM(lParam);
+            DWORD dwAction = ET_GetTaskbarGestureAction(bMiddle, pt);
+            if (dwAction && ET_IsPointOnEmptyTaskbarSpace(pt))
+            {
+                ET_TriggerTaskbarGesture(dwAction);
+            }
+        }
+    }
+    return ET_InputSiteWndProcFunc(hWnd, uMsg, wParam, lParam);
+}
+
+#define ET_TASKBAR_TIMER_ID 0xE5C0
+#define ET_TASKBAR_TIMER_INTERVAL 3000
+
+void EssentialTweaks_OnTaskbarWindowCreated(HWND hTaskbar)
+{
+#if WITH_MAIN_PATCHER
+    // The XAML island is created after the taskbar window; look for it periodically until its procedure is hooked.
+    if (hTaskbar && IsWindows11() && !ET_InputSiteWndProcFunc)
+    {
+        SetTimer(hTaskbar, ET_TASKBAR_TIMER_ID, ET_TASKBAR_TIMER_INTERVAL, NULL);
+    }
+#else
+    UNREFERENCED_PARAMETER(hTaskbar);
+#endif
+}
+
+BOOL EssentialTweaks_OnTaskbarTimer(HWND hTaskbar, WPARAM idTimer)
+{
+    if (idTimer != ET_TASKBAR_TIMER_ID)
+    {
+        return FALSE;
+    }
+#if WITH_MAIN_PATCHER
+    if (ET_InputSiteWndProcFunc)
+    {
+        KillTimer(hTaskbar, ET_TASKBAR_TIMER_ID);
+        return TRUE;
+    }
+    HWND hBridge = FindWindowExW(hTaskbar, NULL, L"Windows.UI.Composition.DesktopWindowContentBridge", NULL);
+    HWND hInputSite = hBridge ? FindWindowExW(hBridge, NULL, L"Windows.UI.Input.InputSite.WindowClass", NULL) : NULL;
+    if (!hInputSite || !IsWindowUnicode(hInputSite))
+    {
+        return TRUE;
+    }
+    // Same process and a Unicode window, so this is the address of the procedure; make sure it is code of a module.
+    void* pWndProc = (void*)GetWindowLongPtrW(hInputSite, GWLP_WNDPROC);
+    HMODULE hModule = NULL;
+    if (pWndProc && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)pWndProc, &hModule) && hModule)
+    {
+        ET_InputSiteWndProcFunc = (ET_WndProc_t)pWndProc;
+        if (funchook_prepare(funchook, (void**)&ET_InputSiteWndProcFunc, ET_InputSiteWndProcHook) != 0)
+        {
+            ET_InputSiteWndProcFunc = NULL;
+        }
+    }
+    // One attempt only: either the hook is in place, or it cannot be installed on this build.
+    KillTimer(hTaskbar, ET_TASKBAR_TIMER_ID);
+#else
+    KillTimer(hTaskbar, ET_TASKBAR_TIMER_ID);
+#endif
+    return TRUE;
+}
+#pragma endregion
+
+#pragma region "Hide Home / Gallery / OneDrive in the navigation pane"
+// Registry based (no hooks): the per-user "System.IsPinnedToNameSpaceTree" value of the namespace extension decides
+// whether it is shown in the navigation pane.
+#define ET_NAVPANE_VALUE L"System.IsPinnedToNameSpaceTree"
+#define ET_NAVPANE_APPLIED_VALUE L"EssentialNavPaneApplied"
+
+typedef struct _ET_NavPaneItem
+{
+    DWORD dwBit;
+    const WCHAR* wszClsid;
+    // OneDrive pins itself through the same per-user value, so it is restored by writing 1 instead of deleting it.
+    BOOL bPerUserRegistration;
+} ET_NavPaneItem;
+
+static const ET_NavPaneItem g_essentialNavPaneItems[] = {
+    { 0x1, L"{f874310e-b6b7-47dc-bc84-b9e6b38f5903}", FALSE }, // Home
+    { 0x2, L"{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}", FALSE }, // Gallery
+    { 0x4, L"{018D5C66-4533-4307-9B53-224DE2ED1FE6}", TRUE },  // OneDrive
+};
+
+static BOOL ET_FormatNavPaneKey(const ET_NavPaneItem* pItem, UINT uView, WCHAR* wszKey, size_t cch)
+{
+    static const WCHAR* const wszFormats[] = {
+        L"Software\\Classes\\CLSID\\%s",
+        L"Software\\Classes\\Wow6432Node\\CLSID\\%s",
+    };
+    return uView < ARRAYSIZE(wszFormats) && _snwprintf_s(wszKey, cch, _TRUNCATE, wszFormats[uView], pItem->wszClsid) > 0;
+}
+
+// Returns TRUE when the entry is already hidden for this user (by the user or by another tool).
+static BOOL ET_IsNavPaneItemHidden(const ET_NavPaneItem* pItem)
+{
+    WCHAR wszKey[128];
+    DWORD dwPinned = 1, dwSize = sizeof(DWORD);
+    if (!ET_FormatNavPaneKey(pItem, 0, wszKey, ARRAYSIZE(wszKey)))
+    {
+        return FALSE;
+    }
+    return RegGetValueW(HKEY_CURRENT_USER, wszKey, ET_NAVPANE_VALUE, RRF_RT_REG_DWORD, NULL, &dwPinned, &dwSize) == ERROR_SUCCESS && dwPinned == 0;
+}
+
+static void ET_SetNavPanePinned(const ET_NavPaneItem* pItem, BOOL bHide)
+{
+    // Only OneDrive is registered for 32-bit applications as well.
+    UINT cViews = pItem->bPerUserRegistration ? 2 : 1;
+    for (UINT i = 0; i < cViews; ++i)
+    {
+        WCHAR wszKey[128];
+        if (!ET_FormatNavPaneKey(pItem, i, wszKey, ARRAYSIZE(wszKey)))
+        {
+            continue;
+        }
+        if (bHide || pItem->bPerUserRegistration)
+        {
+            DWORD dwPinned = bHide ? 0 : 1;
+            RegSetKeyValueW(HKEY_CURRENT_USER, wszKey, ET_NAVPANE_VALUE, REG_DWORD, &dwPinned, sizeof(DWORD));
+        }
+        else
+        {
+            RegDeleteKeyValueW(HKEY_CURRENT_USER, wszKey, ET_NAVPANE_VALUE);
+        }
+    }
+}
+
+// The stored state has two bit fields: the low byte is the last processed setting mask, the second byte tells
+// which entries were actually hidden by this module. Entries that were already hidden by other means are left
+// alone, both when hiding and when restoring.
+static void ET_ApplyNavigationPaneVisibility(HKEY hKey)
+{
+    DWORD dwDesired =
+        (bEssentialHideExplorerHome ? 0x1 : 0) |
+        (bEssentialHideExplorerGallery ? 0x2 : 0) |
+        (bEssentialHideExplorerOneDrive ? 0x4 : 0);
+    DWORD dwState = ET_ReadDword(hKey, ET_NAVPANE_APPLIED_VALUE, 0);
+    DWORD dwProcessed = dwState & 0x7;
+    DWORD dwOwned = (dwState >> 8) & 0x7;
+    if (dwDesired == dwProcessed)
+    {
+        return;
+    }
+    BOOL bChanged = FALSE;
+    for (UINT i = 0; i < ARRAYSIZE(g_essentialNavPaneItems); ++i)
+    {
+        const ET_NavPaneItem* pItem = &g_essentialNavPaneItems[i];
+        if (!((dwDesired ^ dwProcessed) & pItem->dwBit))
+        {
+            continue;
+        }
+        if (dwDesired & pItem->dwBit)
+        {
+            if (!ET_IsNavPaneItemHidden(pItem))
+            {
+                ET_SetNavPanePinned(pItem, TRUE);
+                dwOwned |= pItem->dwBit;
+                bChanged = TRUE;
+            }
+        }
+        else if (dwOwned & pItem->dwBit)
+        {
+            ET_SetNavPanePinned(pItem, FALSE);
+            dwOwned &= ~pItem->dwBit;
+            bChanged = TRUE;
+        }
+    }
+    dwState = dwDesired | (dwOwned << 8);
+    RegSetValueExW(hKey, ET_NAVPANE_APPLIED_VALUE, 0, REG_DWORD, (const BYTE*)&dwState, sizeof(DWORD));
+    if (bChanged)
+    {
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+    }
 }
 #pragma endregion
 

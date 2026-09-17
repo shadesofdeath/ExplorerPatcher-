@@ -788,6 +788,30 @@
 ;x 10 %R:2411%
 ;x 20 %R:2412%
 "EssentialTrayIconFix"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;c 9 %R:2419%
+;x 0 %R:2421%
+;x 1 %R:2422%
+;x 2 %R:2423%
+;x 3 %R:2424%
+;x 4 %R:2425%
+;x 5 %R:2426%
+;x 6 %R:2427%
+;x 7 %R:2428%
+;x 8 %R:2429%
+"EssentialTaskbarDoubleClickAction"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;c 9 %R:2420%
+;x 0 %R:2421%
+;x 1 %R:2422%
+;x 2 %R:2423%
+;x 3 %R:2424%
+;x 4 %R:2425%
+;x 5 %R:2426%
+;x 6 %R:2427%
+;x 7 %R:2428%
+;x 8 %R:2429%
+"EssentialTaskbarMiddleClickAction"=dword:00000000
 ;a %R:2418%
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2413%
@@ -798,6 +822,17 @@
 [HKEY_CURRENT_USER\Software\ExplorerPatcher]
 ;b %R:2415% *
 "EssentialReopenClosedTab"=dword:00000000
+;s Essential_HomeGallerySection IsWindows11Version22H2OrHigher
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2430%
+"EssentialHideExplorerHome"=dword:00000000
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2431%
+"EssentialHideExplorerGallery"=dword:00000000
+;g Essential_HomeGallerySection
+[HKEY_CURRENT_USER\Software\ExplorerPatcher]
+;b %R:2432%
+"EssentialHideExplorerOneDrive"=dword:00000000
 
 
 ;T %R:2301%

@@ -1931,8 +1931,13 @@ LRESULT CALLBACK Shell_TrayWndMouseProc(
         );
         return 1;
     }
+    if (!bOldTaskbar && nCode == HC_ACTION)
+    {
+        // ExplorerPatcher++: double / middle click on empty taskbar space
+        EssentialTweaks_OnTaskbarThreadMouseHook(wParam, (const MOUSEHOOKSTRUCT*)lParam);
+    }
     if (!bOldTaskbar &&
-        bTaskbarAutohideOnDoubleClick && 
+        bTaskbarAutohideOnDoubleClick &&
         nCode == HC_ACTION && 
         wParam == WM_LBUTTONUP &&
         IsPointOnEmptyAreaOfNewTaskbar(((MOUSEHOOKSTRUCT*)lParam)->pt)
@@ -2033,8 +2038,34 @@ INT64 Shell_TrayWndSubclassProc(
             }
             break;
         }
+        case WM_TIMER:
+        {
+            // ExplorerPatcher++: looks for the Windows 11 taskbar's input window
+            if (EssentialTweaks_OnTaskbarTimer(hWnd, wParam))
+            {
+                return 0;
+            }
+            break;
+        }
+        case WM_NCLBUTTONDBLCLK:
+        case WM_MBUTTONDOWN:
+        case WM_MBUTTONUP:
+        case WM_NCMBUTTONDOWN:
+        case WM_NCMBUTTONUP:
+        {
+            // ExplorerPatcher++: double / middle click on empty taskbar space
+            if (bOldTaskbar && EssentialTweaks_OnTaskbarMouseMessage(hWnd, uMsg))
+            {
+                return 0;
+            }
+            break;
+        }
         case WM_LBUTTONDBLCLK:
         {
+            if (bOldTaskbar && EssentialTweaks_OnTaskbarMouseMessage(hWnd, uMsg))
+            {
+                return 0;
+            }
             if (bOldTaskbar && bTaskbarAutohideOnDoubleClick)
             {
                 ToggleTaskbarAutohide();
@@ -7265,11 +7296,13 @@ HWND CreateWindowExWHook(
     else if (bIsExplorerProcess && (*((WORD*)&(lpClassName)+1)) && !wcscmp(lpClassName, L"Shell_TrayWnd"))
     {
         SetWindowSubclass(hWnd, Shell_TrayWndSubclassProc, Shell_TrayWndSubclassProc, TRUE);
+        EssentialTweaks_OnTaskbarWindowCreated(hWnd);
         Shell_TrayWndMouseHook = SetWindowsHookExW(WH_MOUSE, Shell_TrayWndMouseProc, NULL, GetCurrentThreadId());
     }
     else if (bIsExplorerProcess && (*((WORD*)&(lpClassName)+1)) && !wcscmp(lpClassName, L"Shell_SecondaryTrayWnd"))
     {
         SetWindowSubclass(hWnd, Shell_TrayWndSubclassProc, Shell_TrayWndSubclassProc, FALSE);
+        EssentialTweaks_OnTaskbarWindowCreated(hWnd);
     }
     else if (bIsExplorerProcess && (*((WORD*)&(lpClassName)+1)) && !_wcsicmp(lpClassName, L"ReBarWindow32") && hWndParent == FindWindowW(L"Shell_TrayWnd", NULL))
     {

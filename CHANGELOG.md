@@ -8,6 +8,11 @@
   * Do not ask for confirmation when changing a file name extension.
   * Double click an empty area in File Explorer to go up one folder.
   * Ctrl+Shift+T reopens the last closed File Explorer tab (Windows 11 22H2 or newer).
+  * Double click / middle click on empty taskbar space runs a configurable action.
+  * Hide Home, Gallery and OneDrive in the File Explorer navigation pane.
+* The taskbar tweaks now also work on the Windows 11 taskbar of recent builds, which receives its input as `WM_POINTER*` messages (the input window's procedure is hooked inline; it must not be subclassed).
+* Boolean options in the Properties window are drawn as flat, minimal toggle switches.
+* The ARM64 build was removed from the build pipeline (x64 only).
 * All new tweaks are off by default; the original ExplorerPatcher pages are unchanged.
 * Update checks now point to the ExplorerPatcher++ repository.
 

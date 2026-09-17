@@ -15,6 +15,11 @@ The tweaks are C ports of the following [Windhawk mods](https://github.com/ramen
 | Do not ask for confirmation when changing a file name extension | [Turn off change file extension warning](https://windhawk.net/mods/extension-change-no-warning) | m417z |
 | Double click an empty area in File Explorer to go up one folder | [Explorer Double Click Up](https://windhawk.net/mods/explorer-double-click-up) | wrldspawn |
 | Ctrl+Shift+T reopens the last closed File Explorer tab (Windows 11 22H2 or newer) | [File Explorer Reopen Closed Tab](https://windhawk.net/mods/file-explorer-reopen-closed-tab) | Armaninyow |
+| Run an action (show desktop, Task Manager, Start menu, mute, media play/pause, toggle taskbar auto-hide, Task View, lock) on a double click or middle click on empty taskbar space | [Click on empty taskbar space](https://windhawk.net/mods/taskbar-empty-space-clicks) (simplified) | m1lhaus |
+| Hide Home, Gallery and OneDrive in the File Explorer navigation pane (registry based; entries that were already hidden by other means are left alone) | [Hide Home, Gallery & OneDrive in Explorer](https://windhawk.net/mods/hide-home-gallery-explorer) (idea) | rinosaur681 |
+
+All settings on the page are included in the "Export current settings" / "Import settings" feature. ExplorerPatcher++
+is built for x64 only; the ARM64 build was removed from the build pipeline.
 
 The implementation lives in [`ExplorerPatcher/EssentialTweaks.c`](ExplorerPatcher/EssentialTweaks.c). Settings are
 stored as `Essential*` values under `HKCU\Software\ExplorerPatcher`, next to the regular ExplorerPatcher settings.
@@ -30,7 +35,7 @@ This project aims to enhance the working environment on Windows.
 ## How to?
 
 1. Download the latest setup program from the [Releases page](https://github.com/valinet/ExplorerPatcher/releases/latest).
-   * Choose `ep_setup.exe` if your device uses an Intel or AMD processor, or `ep_setup_arm64.exe` if your device uses a Snapdragon processor.
+   * ExplorerPatcher++ only provides `ep_setup.exe` for devices with an Intel or AMD (x64) processor.
 2. Run the installer. It will automatically prompt for elevation, after which it will close `explorer.exe` and install the necessary files. When done, you will see the desktop again and the Windows 10 taskbar.
 3. Right-click the taskbar and choose "Properties".
 4. To change the taskbar style, go to the "Taskbar" section and look for "Taskbar style".
@@ -52,7 +57,7 @@ That's it!
 ## Updating
 
 * The program features built-in updates: go to "Properties" - "Updates" to configure, check for and install the latest updates. Learn more [here](https://github.com/valinet/ExplorerPatcher/wiki/Configure-updates).
-* Download the latest version's [setup file for x64](https://github.com/valinet/ExplorerPatcher/releases/latest/download/ep_setup.exe) or [setup file for ARM64](https://github.com/valinet/ExplorerPatcher/releases/latest/download/ep_setup_arm64.exe) and simply run it.
+* Download the latest version's [setup file for x64](https://github.com/valinet/ExplorerPatcher/releases/latest/download/ep_setup.exe) and simply run it.
 
 ## Donate
 
