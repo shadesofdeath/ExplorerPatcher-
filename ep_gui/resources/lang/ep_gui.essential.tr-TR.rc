@@ -1,0 +1,42 @@
+﻿#include "resources/resource.h"
+#include "winres.h"
+
+// ExplorerPatcher++: Turkish strings of the "Essential Tweaks" page. They live here instead of the
+// ExplorerPatcher-L10N submodule; the IDs are in string table blocks of their own, so they do not collide with it.
+LANGUAGE LANG_TURKISH, SUBLANG_TURKISH_TURKEY
+
+STRINGTABLE
+BEGIN
+    IDS_ESSENTIAL               "Temel İnce Ayarlar"
+    IDS_ESSENTIAL_DESCRIPTION   "Windhawk modlarından uyarlanan ek ince ayarlar. Bu sayfadaki her şey varsayılan olarak kapalıdır."
+    IDS_ESSENTIAL_TASKBAR       "Görev Çubuğu"
+    IDS_ESSENTIAL_VOLSCROLL     "Görev çubuğu üzerinde fare tekerleğiyle sistem sesini değiştir"
+    IDS_ESSENTIAL_VOLSCROLL_0   "Kapalı"
+    IDS_ESSENTIAL_VOLSCROLL_1   "Tüm görev çubuğu"
+    IDS_ESSENTIAL_VOLSCROLL_2   "Yalnızca bildirim alanı"
+    IDS_ESSENTIAL_VOLSTEP       "Her tekerlek adımında ses değişimi (yüzde)"
+    IDS_ESSENTIAL_TRAYFIX       "Kaybolan tepsi simgelerini düzelt"
+    IDS_ESSENTIAL_TRAYFIX_0     "Kapalı"
+    IDS_ESSENTIAL_TRAYFIX_5     "Başlangıçtan 5 saniye sonra"
+    IDS_ESSENTIAL_TRAYFIX_10    "Başlangıçtan 10 saniye sonra"
+    IDS_ESSENTIAL_TRAYFIX_20    "Başlangıçtan 20 saniye sonra"
+    IDS_ESSENTIAL_EXPLORER      "Dosya Gezgini"
+    IDS_ESSENTIAL_EXTWARN       "Dosya uzantısı değiştirilirken onay isteme"
+    IDS_ESSENTIAL_DBLCLICKUP    "Boş alana çift tıklayınca bir üst klasöre git"
+    IDS_ESSENTIAL_REOPENTAB     "Ctrl+Shift+T son kapatılan sekmeyi yeniden açsın"
+    IDS_ESSENTIAL_CREDITS       "Windhawk modlarından uyarlanmıştır; yazarlar README dosyasında belirtilmiştir. Daha fazla bilgi"
+    IDS_ESSENTIAL_TBDBLCLICK    "Görev çubuğunun boş alanına çift tıklama"
+    IDS_ESSENTIAL_TBMIDCLICK    "Görev çubuğunun boş alanına orta tıklama"
+    IDS_ESSENTIAL_TBACTION_0    "Hiçbir şey"
+    IDS_ESSENTIAL_TBACTION_1    "Masaüstünü göster"
+    IDS_ESSENTIAL_TBACTION_2    "Görev Yöneticisi'ni aç"
+    IDS_ESSENTIAL_TBACTION_3    "Başlat menüsünü aç"
+    IDS_ESSENTIAL_TBACTION_4    "Sesi kapat / aç"
+    IDS_ESSENTIAL_TBACTION_5    "Medya oynat / duraklat"
+    IDS_ESSENTIAL_TBACTION_6    "Görev çubuğunu otomatik gizlemeyi aç / kapat"
+    IDS_ESSENTIAL_TBACTION_7    "Görev Görünümü (Win+Tab)"
+    IDS_ESSENTIAL_TBACTION_8    "Bilgisayarı kilitle"
+    IDS_ESSENTIAL_HIDEHOME      "Gezinti bölmesinde Giriş'i gizle"
+    IDS_ESSENTIAL_HIDEGALLERY   "Gezinti bölmesinde Galeri'yi gizle"
+    IDS_ESSENTIAL_HIDEONEDRIVE  "Gezinti bölmesinde OneDrive'ı gizle"
+END
