@@ -10,7 +10,6 @@
 #include <servprov.h>
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
-#include <UIAutomationClient.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -577,39 +576,6 @@ static void ET_BrowseToParentFolder(HWND hWnd)
     }
 }
 
-static IUIAutomation2* g_pEssentialUIAutomation = NULL;
-
-static BOOL ET_GetUIAutomationClassNameAtPoint(POINT pt, WCHAR* wszClass, size_t cch)
-{
-    if (!g_pEssentialUIAutomation)
-    {
-        IUIAutomation2* pUIAutomation = NULL;
-        if (FAILED(CoCreateInstance(&CLSID_CUIAutomation8, NULL, CLSCTX_INPROC_SERVER, &IID_IUIAutomation2, (LPVOID*)&pUIAutomation)) || !pUIAutomation)
-        {
-            return FALSE;
-        }
-        if (InterlockedCompareExchangePointer((PVOID volatile*)&g_pEssentialUIAutomation, pUIAutomation, NULL) != NULL)
-        {
-            // Another thread created the instance first.
-            pUIAutomation->lpVtbl->Release(pUIAutomation);
-        }
-    }
-
-    BOOL bSuccess = FALSE;
-    IUIAutomationElement* pElement = NULL;
-    if (SUCCEEDED(g_pEssentialUIAutomation->lpVtbl->ElementFromPoint(g_pEssentialUIAutomation, pt, &pElement)) && pElement)
-    {
-        BSTR bstrClass = NULL;
-        if (SUCCEEDED(pElement->lpVtbl->get_CurrentClassName(pElement, &bstrClass)) && bstrClass)
-        {
-            bSuccess = (wcsncpy_s(wszClass, cch, bstrClass, _TRUNCATE) == 0);
-            SysFreeString(bstrClass);
-        }
-        pElement->lpVtbl->Release(pElement);
-    }
-    return bSuccess;
-}
-
 static DWORD g_dwEssentialLastClickTime = 0;
 static HWND g_hEssentialLastClickWnd = NULL;
 static WCHAR g_wszEssentialLastClickClass[ET_CLASSNAME_CCH];
@@ -622,7 +588,7 @@ static void ET_OnDefViewClick(HWND hDefView)
     POINT pt;
     WCHAR wszClass[ET_CLASSNAME_CCH];
 
-    if (!GetCursorPos(&pt) || !ET_GetUIAutomationClassNameAtPoint(pt, wszClass, ARRAYSIZE(wszClass)))
+    if (!GetCursorPos(&pt) || !EssentialTweaks_GetUIAutomationClassNameAtPoint(pt, wszClass, ARRAYSIZE(wszClass)))
     {
         g_hEssentialLastClickWnd = NULL;
         return;

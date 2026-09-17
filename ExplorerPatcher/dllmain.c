@@ -1570,6 +1570,47 @@ HMODULE __fastcall combase_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE hFile, D
 #pragma endregion
 
 
+#pragma region "ExplorerPatcher++ UI Automation helper"
+static IUIAutomation2* g_pEssentialUIAutomation = NULL;
+
+BOOL EssentialTweaks_GetUIAutomationClassNameAtPoint(POINT pt, WCHAR* wszClass, size_t cch)
+{
+    if (!wszClass || cch == 0)
+    {
+        return FALSE;
+    }
+    wszClass[0] = 0;
+    if (!g_pEssentialUIAutomation)
+    {
+        IUIAutomation2* pUIAutomation = NULL;
+        if (FAILED(CoCreateInstance(&CLSID_CUIAutomation8, NULL, CLSCTX_INPROC_SERVER, &IID_IUIAutomation2, (LPVOID*)&pUIAutomation)) || !pUIAutomation)
+        {
+            return FALSE;
+        }
+        if (InterlockedCompareExchangePointer((PVOID volatile*)&g_pEssentialUIAutomation, pUIAutomation, NULL) != NULL)
+        {
+            // Another thread created the instance first.
+            pUIAutomation->lpVtbl->Release(pUIAutomation);
+        }
+    }
+
+    BOOL bSuccess = FALSE;
+    IUIAutomationElement* pElement = NULL;
+    if (SUCCEEDED(g_pEssentialUIAutomation->lpVtbl->ElementFromPoint(g_pEssentialUIAutomation, pt, &pElement)) && pElement)
+    {
+        BSTR bstrClass = NULL;
+        if (SUCCEEDED(pElement->lpVtbl->get_CurrentClassName(pElement, &bstrClass)) && bstrClass)
+        {
+            bSuccess = (wcsncpy_s(wszClass, cch, bstrClass, _TRUNCATE) == 0);
+            SysFreeString(bstrClass);
+        }
+        pElement->lpVtbl->Release(pElement);
+    }
+    return bSuccess;
+}
+#pragma endregion
+
+
 #pragma region "Shell_TrayWnd subclass"
 #if WITH_MAIN_PATCHER
 int HandleTaskbarCornerInteraction(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)

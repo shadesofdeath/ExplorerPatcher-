@@ -42,6 +42,10 @@ void EssentialTweaks_Start(void);
 // Returns TRUE when the message was consumed.
 BOOL EssentialTweaks_OnTaskbarMouseWheel(HWND hWnd, WPARAM wParam, LPARAM lParam);
 
+// Implemented in dllmain.c (UIAutomationClient.h defines symbols with external linkage and can only be included
+// in one translation unit): returns the UI Automation class name of the element at the given screen point.
+BOOL EssentialTweaks_GetUIAutomationClassNameAtPoint(POINT pt, WCHAR* wszClass, size_t cch);
+
 // Called from the CreateWindowExW hook after a window was created.
 void EssentialTweaks_OnWindowCreated(HWND hWnd, HWND hWndParent);
 
